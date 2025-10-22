@@ -1,0 +1,3 @@
+# User Journey  
+
+A farmer starts by registering each animal with its core details, keeping a clean, up-to-date inventory and deleting animals when they leave the operation. They create groups—like pens, herds, or treatment cohorts—and can add or remove animals from those groups as routines change. During weigh-ins, they record weights in the app; when it’s time to review performance, they generate weight reports for selected animals or groups over a chosen date range. The report shows each animal’s recorded weights and average daily gain, and an AI summary highlights top and low performers, flags suspicious or inconsistent records, and offers practical, actionable insights to guide feeding, health checks, and marketing decisions.  

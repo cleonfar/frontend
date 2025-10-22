@@ -1,0 +1,1405 @@
+openapi: 3.0.3
+info:
+  title: Animal Management API
+  version: "1.0.0"
+  description: >
+    OpenAPI spec for AnimalIdentity, HerdGrouping, GrowthTracking and ReproductionTracking concepts.
+servers:
+  - url: http://localhost:8000
+    description: Local backend
+
+paths:
+  /api/AnimalIdentity/registerAnimal:
+    post:
+      summary: Register a new animal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterAnimalRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterAnimalResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/removeAnimal:
+    post:
+      summary: Remove an animal from the database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                animal:
+                  type: string
+                  description: Animal ID
+              required:
+                - animal
+      responses:
+        '200':
+          description: Removed
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/_getAllAnimals:
+    post:
+      summary: Get all registered animals
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional empty body
+      responses:
+        '200':
+          description: List of animals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Animal'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/{id}:
+    get:
+      summary: Get animal details by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Animal details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Animal'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/updateStatus:
+    post:
+      summary: Update an animal's status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStatusRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/editDetails:
+    post:
+      summary: Edit identifying attributes of an animal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditDetailsRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/markAsTransferred:
+    post:
+      summary: Mark an animal as transferred
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAsTransferredRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/markAsDeceased:
+    post:
+      summary: Mark an animal as deceased
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAsDeceasedRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/AnimalIdentity/markAsSold:
+    post:
+      summary: Mark an animal as sold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAsSoldRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/createHerd:
+    post:
+      summary: Create a new herd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateHerdRequest'
+      responses:
+        '201':
+          description: Herd created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateHerdResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/_listHerds:
+    post:
+      summary: List all herds
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional empty body
+      responses:
+        '200':
+          description: List of herds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Herd'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/addAnimal:
+    post:
+      summary: Add an animal to a herd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HerdAnimalChangeRequest'
+      responses:
+        '200':
+          description: Added
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/removeAnimal:
+    post:
+      summary: Remove an animal from a herd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HerdAnimalChangeRequest'
+      responses:
+        '200':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/_viewComposition:
+    post:
+      summary: View a herd's composition (member IDs)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                herdName:
+                  type: string
+              required:
+                - herdName
+      responses:
+        '200':
+          description: Herd composition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HerdCompositionResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/deleteHerd:
+    post:
+      summary: Delete a herd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                herdName:
+                  type: string
+              required:
+                - herdName
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/moveAnimal:
+    post:
+      summary: Move an animal from one herd to another
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveAnimalRequest'
+      responses:
+        '200':
+          description: Moved
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/mergeHerds:
+    post:
+      summary: Merge two herds
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergeHerdsRequest'
+      responses:
+        '200':
+          description: Merged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeHerdsResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/HerdGrouping/splitHerd:
+    post:
+      summary: Split a herd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SplitHerdRequest'
+      responses:
+        '200':
+          description: Split completed
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/recordWeight:
+    post:
+      summary: Record a weight measurement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWeightRequest'
+      responses:
+        '200':
+          description: Recorded
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/_getAllAnimalsWithWeightRecords:
+    post:
+      summary: List animals that have weight records
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional empty body
+      responses:
+        '200':
+          description: List of animal IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/_getAnimalWeights:
+    post:
+      summary: Get weight records for a specific animal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                animal:
+                  type: string
+              required:
+                - animal
+      responses:
+        '200':
+          description: Weight records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WeightRecord'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/removeWeightRecord:
+    post:
+      summary: Remove a weight record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveWeightRecordRequest'
+      responses:
+        '200':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/generateReport:
+    post:
+      summary: Generate or append to a growth report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateReportRequest'
+      responses:
+        '200':
+          description: Report results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Results:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/renameReport:
+    post:
+      summary: Rename growth report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameReportRequest'
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newName:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/deleteReport:
+    post:
+      summary: Delete growth report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteReportRequest'
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/aiSummary:
+    post:
+      summary: Generate AI summary for a growth report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiSummaryRequest'
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/_listReports:
+    post:
+      summary: List available growth reports
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional empty body
+      responses:
+        '200':
+          description: Report names
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/GrowthTracking/_getReportByName:
+    post:
+      summary: Get a growth report by name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetReportRequest'
+      responses:
+        '200':
+          description: Report content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Results:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/addMother:
+    post:
+      summary: Add mother to tracking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddMotherRequest'
+      responses:
+        '201':
+          description: Mother added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddMotherResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/removeMother:
+    post:
+      summary: Remove mother from tracking
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemoveMotherRequest'
+      responses:
+        '200':
+          description: Removed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemoveMotherResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/recordLitter:
+    post:
+      summary: Record a new litter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordLitterRequest'
+      responses:
+        '201':
+          description: Litter created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  litterID:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/updateLitter:
+    post:
+      summary: Update a litter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLitterRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  litterID:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/recordOffspring:
+    post:
+      summary: Record an individual offspring
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordOffspringRequest'
+      responses:
+        '201':
+          description: Offspring created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offspringID:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/updateOffspring:
+    post:
+      summary: Update offspring details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOffspringRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offspringID:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/recordWeaning:
+    post:
+      summary: Record an offspring weaning
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWeaningRequest'
+      responses:
+        '200':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offspringID:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/recordDeath:
+    post:
+      summary: Record an offspring death
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordDeathRequest'
+      responses:
+        '200':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  offspringId:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/generateReport:
+    post:
+      summary: Generate or append to a reproduction report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateReportRequest'
+      responses:
+        '200':
+          description: Report results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Results:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/renameReport:
+    post:
+      summary: Rename a reproduction report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameReportRequest'
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newName:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/deleteReport:
+    post:
+      summary: Delete a reproduction report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteReportRequest'
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/aiSummary:
+    post:
+      summary: Generate AI summary for reproduction report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiSummaryRequest'
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/_listMothers:
+    post:
+      summary: List all mothers tracked for reproduction
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Optional empty body
+      responses:
+        '200':
+          description: List of mother IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/_getOffspringForMother:
+    post:
+      summary: Get offspring for a specific mother
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                motherId:
+                  type: string
+              required:
+                - motherId
+      responses:
+        '200':
+          description: Offspring list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Offspring'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/ReproductionTracking/_getReportByName:
+    post:
+      summary: Get a reproduction report by name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetReportRequest'
+      responses:
+        '200':
+          description: Report content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Results:
+                    type: string
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  responses:
+    ErrorResponse:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Herd:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        members:
+          type: array
+          items:
+            type: string
+      required:
+        - name
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Animal:
+      type: object
+      properties:
+        id:
+          type: string
+        species:
+          type: string
+        sex:
+          type: string
+          enum: [male, female, neutered]
+        birthDate:
+          type: string
+          format: date
+        breed:
+          type: string
+        mother:
+          type: string
+        father:
+          type: string
+        notes:
+          type: string
+        status:
+          type: string
+          enum: [alive, sold, deceased, transferred]
+      required:
+        - id
+        - species
+        - sex
+        - birthDate
+
+    RegisterAnimalRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        species:
+          type: string
+        sex:
+          type: string
+          enum: [male, female, neutered]
+        birthDate:
+          type: string
+          format: date
+        breed:
+          type: string
+        mother:
+          type: string
+        father:
+          type: string
+        notes:
+          type: string
+      required:
+        - id
+        - species
+        - sex
+        - birthDate
+
+    RegisterAnimalResponse:
+      type: object
+      properties:
+        animal:
+          type: string
+
+    UpdateStatusRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [alive, sold, deceased]
+        notes:
+          type: string
+      required:
+        - id
+        - status
+
+    EditDetailsRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        species:
+          type: string
+        breed:
+          type: string
+        birthDate:
+          type: string
+          format: date
+        sex:
+          type: string
+          enum: [male, female, neutered]
+      required:
+        - id
+        - species
+        - breed
+        - birthDate
+        - sex
+
+    MarkAsTransferredRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+          format: date
+        recipientNotes:
+          type: string
+      required:
+        - id
+        - date
+
+    MarkAsDeceasedRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+          format: date
+        cause:
+          type: string
+      required:
+        - id
+        - date
+
+    MarkAsSoldRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        date:
+          type: string
+          format: date
+        buyerNotes:
+          type: string
+      required:
+        - id
+        - date
+
+    CreateHerdRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      required:
+        - name
+
+    CreateHerdResponse:
+      type: object
+      properties:
+        herdName:
+          type: string
+
+    HerdAnimalChangeRequest:
+      type: object
+      properties:
+        herdName:
+          type: string
+        animal:
+          type: string
+      required:
+        - herdName
+        - animal
+
+    HerdCompositionResponse:
+      type: object
+      properties:
+        members:
+          type: array
+          items:
+            type: string
+
+    MoveAnimalRequest:
+      type: object
+      properties:
+        sourceHerd:
+          type: string
+        targetHerd:
+          type: string
+        animal:
+          type: string
+      required:
+        - sourceHerd
+        - targetHerd
+        - animal
+
+    MergeHerdsRequest:
+      type: object
+      properties:
+        herdNameToKeep:
+          type: string
+        herdNameToArchive:
+          type: string
+      required:
+        - herdNameToKeep
+        - herdNameToArchive
+
+    MergeHerdsResponse:
+      type: object
+      properties:
+        herdName:
+          type: string
+
+    SplitHerdRequest:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        animals:
+          type: array
+          items:
+            type: string
+      required:
+        - source
+        - target
+        - animals
+
+    RecordWeightRequest:
+      type: object
+      properties:
+        animal:
+          type: string
+        dateGenerated:
+          type: string
+          format: date
+        date:
+          type: string
+          format: date
+          description: Legacy field; prefer dateGenerated
+        dateGeneratedMs:
+          type: integer
+          format: int64
+          description: Epoch milliseconds corresponding to dateGenerated (UTC midnight)
+        weight:
+          type: number
+        notes:
+          type: string
+      required:
+        - animal
+        - dateGenerated
+        - weight
+
+    GetReportRequest:
+      type: object
+      properties:
+        reportName:
+          type: string
+      required:
+        - reportName
+
+    RemoveWeightRecordRequest:
+      type: object
+      properties:
+        animal:
+          type: string
+        date:
+          type: string
+          format: date
+      required:
+        - animal
+        - date
+
+    GenerateReportRequest:
+      type: object
+      properties:
+        animal:
+          type: string
+        startDateRange:
+          type: string
+          format: date
+        endDateRange:
+          type: string
+          format: date
+        reportName:
+          type: string
+      required:
+        - animal
+        - startDateRange
+        - endDateRange
+        - reportName
+
+    RenameReportRequest:
+      type: object
+      properties:
+        oldName:
+          type: string
+        newName:
+          type: string
+      required:
+        - oldName
+        - newName
+
+    DeleteReportRequest:
+      type: object
+      properties:
+        reportName:
+          type: string
+      required:
+        - reportName
+
+    AiSummaryRequest:
+      type: object
+      properties:
+        reportName:
+          type: string
+      required:
+        - reportName
+
+    AddMotherRequest:
+      type: object
+      properties:
+        motherId:
+          type: string
+      required:
+        - motherId
+
+    AddMotherResponse:
+      type: object
+      properties:
+        motherId:
+          type: string
+
+    RemoveMotherRequest:
+      type: object
+      properties:
+        motherId:
+          type: string
+      required:
+        - motherId
+
+    RemoveMotherResponse:
+      type: object
+      properties:
+        motherId:
+          type: string
+
+    RecordLitterRequest:
+      type: object
+      properties:
+        motherId:
+          type: string
+        fatherId:
+          type: string
+        birthDate:
+          type: string
+          format: date
+        reportedLitterSize:
+          type: integer
+        notes:
+          type: string
+      required:
+        - motherId
+        - birthDate
+        - reportedLitterSize
+
+    UpdateLitterRequest:
+      type: object
+      properties:
+        litterId:
+          type: string
+        motherId:
+          type: string
+        fatherId:
+          type: string
+        birthDate:
+          type: string
+          format: date
+        reportedLitterSize:
+          type: integer
+        notes:
+          type: string
+      required:
+        - litterId
+
+    RecordOffspringRequest:
+      type: object
+      properties:
+        litterId:
+          type: string
+        offspringId:
+          type: string
+        sex:
+          type: string
+          enum: [male, female, neutered]
+        notes:
+          type: string
+        motherId:
+          type: string
+      required:
+        - litterId
+        - offspringId
+        - sex
+
+    UpdateOffspringRequest:
+      type: object
+      properties:
+        offspringId:
+          type: string
+        litterId:
+          type: string
+        sex:
+          type: string
+          enum: [male, female, neutered]
+        notes:
+          type: string
+      required:
+        - offspringId
+
+    Offspring:
+      type: object
+      properties:
+        offspringId:
+          type: string
+        sex:
+          type: string
+        notes:
+          type: string
+        litterId:
+          type: string
+
+    RecordWeaningRequest:
+      type: object
+      properties:
+        offspringId:
+          type: string
+        date:
+          type: string
+          format: date
+          description: Deprecated; prefer dateGenerated
+        dateGenerated:
+          type: string
+          format: date
+          description: Date-only value (YYYY-MM-DD)
+        dateGeneratedMs:
+          type: integer
+          format: int64
+          description: Epoch milliseconds corresponding to dateGenerated (UTC midnight)
+    RecordDeathRequest:
+      type: object
+      properties:
+        offspringId:
+          type: string
+        - animal
+        - weight
+
+    WeightRecord:
+      type: object
+      properties:
+        dateGenerated:
+          type: string
+          format: date
+        date:
+          type: string
+          format: date
+          description: Legacy field; either date or dateGenerated may be present
+        dateGeneratedMs:
+          type: integer
+          format: int64
+          description: Epoch milliseconds for the record date
+        weight:
+          type: number
+        notes:
+          type: string
+      required:
+        - weight
