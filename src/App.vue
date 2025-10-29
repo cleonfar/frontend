@@ -9,7 +9,3 @@
 import AppHeader from './components/AppHeader.vue'
 </script>
 
-<style>
-body { font-family: system-ui, Arial, sans-serif; }
-#app { padding: 2rem; }
-</style>

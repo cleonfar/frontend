@@ -1,4 +1,5 @@
 import { setDiag } from '@/utils/diag'
+import { getCurrentUsername } from '@/utils/auth'
 
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string) || 'http://127.0.0.1:8000'
 
@@ -50,74 +51,98 @@ function makeFullUrl(url: string) {
 }
 
 export async function postJson<TRequest, TResponse>(url: string, body: TRequest): Promise<TResponse> {
+  // Inject user into request body when available and not already present
+  let sendBody: any = body as any
+  const username = getCurrentUsername()
+  if (username && body && typeof body === 'object' && !('user' in (body as any))) {
+    sendBody = { ...(body as any), user: username }
+  }
+  // Also append user as a query param to maximize backend compatibility
+  const appendUser = (u: string | null, raw: string) => {
+    if (!u) return raw
+    const hasQuery = raw.includes('?')
+    const sep = hasQuery ? '&' : '?'
+    return `${raw}${sep}user=${encodeURIComponent(u)}`
+  }
   const init: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Accept': 'application/json'
+      'Accept': 'application/json',
+      // Send only X-User to match backend expectation
+      ...(username ? { 'X-User': username } : {})
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(sendBody)
   }
 
-  const full = makeFullUrl(url)
+  const urlWithUser = appendUser(username, url)
+  const full = makeFullUrl(urlWithUser)
 
   // Prefer direct backend first (may require CORS), then fallback to proxy-relative
   try {
-    setDiag(full, undefined, undefined)
+    setDiag(full, undefined, undefined, 'POST')
     const res = await doFetch(full, init)
     const parsed = await parseResponse<TResponse>(res)
     if (!parsed.ok) {
-      setDiag(full, undefined, parsed.error)
+      setDiag(full, undefined, parsed.error, 'POST')
       throw new Error(parsed.error)
     }
-    setDiag(full, parsed.data, undefined)
+    setDiag(full, parsed.data, undefined, 'POST')
     return parsed.data as TResponse
   } catch (e) {
     try {
-      setDiag(url, undefined, undefined)
-      const res2 = await doFetch(url, init)
+      setDiag(urlWithUser, undefined, undefined, 'POST')
+      const res2 = await doFetch(urlWithUser, init)
       const parsed2 = await parseResponse<TResponse>(res2)
       if (!parsed2.ok) {
-        setDiag(url, undefined, parsed2.error)
+        setDiag(urlWithUser, undefined, parsed2.error, 'POST')
         throw new Error(parsed2.error)
       }
-      setDiag(url, parsed2.data, undefined)
+      setDiag(urlWithUser, parsed2.data, undefined, 'POST')
       return parsed2.data as TResponse
     } catch (e2: any) {
       const msg = e2?.message ?? (e as any)?.message ?? String(e2 ?? e)
-      setDiag(url, undefined, msg)
+      setDiag(urlWithUser, undefined, msg, 'POST')
       throw new Error(msg)
     }
   }
 }
 
 export async function getJson<TResponse>(url: string): Promise<TResponse> {
-  const full = makeFullUrl(url)
+  const username = getCurrentUsername()
+  const appendUser = (u: string | null, raw: string) => {
+    if (!u) return raw
+    const hasQuery = raw.includes('?')
+    const sep = hasQuery ? '&' : '?'
+    return `${raw}${sep}user=${encodeURIComponent(u)}`
+  }
+  const full = makeFullUrl(appendUser(username, url))
 
   try {
-    setDiag(full, undefined, undefined)
+    setDiag(full, undefined, undefined, 'GET')
     const res = await doFetch(full)
     const parsed = await parseResponse<TResponse>(res)
     if (!parsed.ok) {
-      setDiag(full, undefined, parsed.error)
+      setDiag(full, undefined, parsed.error, 'GET')
       throw new Error(parsed.error)
     }
-    setDiag(full, parsed.data, undefined)
+    setDiag(full, parsed.data, undefined, 'GET')
     return parsed.data as TResponse
   } catch (e) {
     try {
-      setDiag(url, undefined, undefined)
-      const res2 = await doFetch(url)
+      const proxied = appendUser(username, url)
+      setDiag(proxied, undefined, undefined, 'GET')
+      const res2 = await doFetch(proxied)
       const parsed2 = await parseResponse<TResponse>(res2)
       if (!parsed2.ok) {
-        setDiag(url, undefined, parsed2.error)
+        setDiag(url, undefined, parsed2.error, 'GET')
         throw new Error(parsed2.error)
       }
-      setDiag(url, parsed2.data, undefined)
+      setDiag(url, parsed2.data, undefined, 'GET')
       return parsed2.data as TResponse
     } catch (e2: any) {
       const msg = e2?.message ?? (e as any)?.message ?? String(e2 ?? e)
-      setDiag(url, undefined, msg)
+      setDiag(url, undefined, msg, 'GET')
       throw new Error(msg)
     }
   }

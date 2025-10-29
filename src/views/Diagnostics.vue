@@ -1,5 +1,5 @@
 <template>
-  <div class="card">
+  <div class="card root-card">
     <h2>Diagnostics</h2>
     <p>Click the button to fetch <code>/api/hello</code> (proxied to backend).</p>
     <button @click="callApi" :disabled="loading">Call /api/hello</button>
@@ -11,6 +11,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { getJson } from '@/utils/api'
 
 const loading = ref(false)
 const result = ref<string | null>(null)
@@ -21,10 +22,8 @@ async function callApi() {
   result.value = null
   error.value = null
   try {
-    const res = await fetch('/api/hello')
-    const text = await res.text()
-    if (!res.ok) throw new Error(text || `${res.status} ${res.statusText}`)
-    result.value = text
+    const data = await getJson<string>('/api/hello')
+    result.value = typeof data === 'string' ? data : JSON.stringify(data)
   } catch (err: any) {
     error.value = err?.message ?? String(err)
   } finally {

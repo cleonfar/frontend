@@ -1,9 +1,16 @@
 <template>
-  <div class="card">
-    <h2>Reproduction Tracking</h2>
+  <div class="card root-card">
+  <h2>Mothers & Offspring</h2>
 
-    <section>
-      <h3>Add mother</h3>
+    <!-- Tabs -->
+    <div class="tabs">
+      <button :class="['tab', activeTab === 'mothers' && 'active']" @click="activeTab = 'mothers'">Mothers Overview</button>
+      <button :class="['tab', activeTab === 'reports' && 'active']" @click="activeTab = 'reports'">Reports</button>
+    </div>
+
+
+    <!-- Mothers & Litters Tab -->
+    <section v-if="activeTab === 'mothers'">
       <form @submit.prevent="onAddMother">
         <div class="row">
           <label>Mother ID</label>
@@ -13,105 +20,82 @@
         <div v-if="addMotherError" class="error">{{ addMotherError }}</div>
         <div v-if="addMotherOk" class="ok">Added.</div>
       </form>
-    </section>
 
-    <section>
       <h3>Mothers</h3>
       <div class="row">
-        <button @click="loadMothers" :disabled="mothersLoading">{{ mothersLoading ? 'Loading…' : 'Load mothers' }}</button>
+        <button @click="toggleSelectMothers">{{ selectMothers ? 'Done selecting' : 'Select mothers for report' }}</button>
+        <button class="ml" v-if="selectMothers" @click="showBatch = !showBatch" :disabled="selectedMotherCount === 0">
+          {{ showBatch ? 'Hide batch' : 'Create report for selected' }} ({{ selectedMotherCount }})
+        </button>
         <div v-if="mothersError" class="error">{{ mothersError }}</div>
+      </div>
+      <div v-if="selectMothers && showBatch && selectedMotherCount > 0" class="mt">
+        <div class="row">
+          <label>Start</label>
+          <input type="date" v-model="batch.start" required />
+        </div>
+        <div class="row">
+          <label>End</label>
+          <input type="date" v-model="batch.end" required />
+        </div>
+        <div class="row">
+          <label>Report name</label>
+          <input v-model="batch.name" required placeholder="e.g. Fall-2025" />
+        </div>
+        <button @click="onGenerateBatchSelected" :disabled="batching">{{ batching ? 'Generating…' : 'Generate for selected' }}</button>
+        <div v-if="batchError" class="error">{{ batchError }}</div>
+        <ul v-if="batchResults.length" class="mt">
+          <li v-for="r in batchResults" :key="r">{{ r }}</li>
+        </ul>
       </div>
       <table v-if="mothers.length">
         <thead>
           <tr>
+            <th v-if="selectMothers">Select</th>
             <th>Mother ID</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <template v-for="mid in mothers" :key="mid">
-            <tr>
-              <td>{{ mid }}</td>
-              <td><button @click="toggleMother(mid)">{{ expanded[mid] ? 'Hide offspring' : 'View offspring' }}</button></td>
+            <tr class="clickable-row" @click="toggleMother(mid)">
+              <td v-if="selectMothers" @click.stop>
+                <input type="checkbox" :checked="isMotherSelected(mid)" @change="toggleMotherSelected(mid)" />
+              </td>
+              <td><strong>{{ mid }}</strong></td>
+              <td>
+                <button @click.stop="goMother(mid)">Manage offspring</button>
+                <button class="ml" @click.stop="removeMother(mid)" :disabled="removingMother[mid]">
+                  {{ removingMother[mid] ? 'Removing…' : 'Remove' }}
+                </button>
+              </td>
             </tr>
             <tr v-if="expanded[mid]">
               <td colspan="2">
                 <div class="offspring-box">
-                  <strong>Offspring</strong>
-                  <div v-if="offspringLoading[mid]" class="muted">Loading…</div>
-                  <div v-else-if="offspringError[mid]" class="error">{{ offspringError[mid] }}</div>
+                  <strong>Litters</strong>
+                  <div v-if="littersLoading[mid]" class="muted">Loading…</div>
+                  <div v-else-if="littersError[mid]" class="error">{{ littersError[mid] }}</div>
                   <div v-else>
-                    <ul v-if="offspringByMother[mid] && offspringByMother[mid].length" class="offspring-list">
-                      <li v-for="o in offspringByMother[mid]" :key="o.offspringId" class="offspring-item">
-                        <span><strong>{{ o.offspringId }}</strong> — {{ o.sex || 'unknown' }}</span>
-                        <span v-if="o.notes" class="muted"> ({{ o.notes }})</span>
-                        <button class="ml" @click="startEditOffspring(mid, o)">Edit</button>
-                      </li>
-                    </ul>
-                    <div v-else><em>No offspring</em></div>
-                  </div>
-
-                  <div class="mt">
-                    <details>
-                      <summary>Add offspring</summary>
-                      <form @submit.prevent="onAddOffspring(mid)">
-                        <div class="row">
-                          <label>Litter ID</label>
-                          <input v-model="addForm[mid].litterId" required placeholder="e.g. LIT-2025-01" />
+                    <template v-if="littersByMother[mid] && littersByMother[mid].length">
+                      <div v-for="lit in littersByMother[mid]" :key="lit.litterId" class="litter-block">
+                        <div class="litter-header">
+                          <strong>Litter born {{ lit.date ? formatDate(lit.date) : 'unknown' }}</strong>
+                          <span v-if="lit.notes" class="muted"> ({{ lit.notes }})</span>
                         </div>
-                        <div class="row">
-                          <label>Offspring ID</label>
-                          <input v-model="addForm[mid].offspringId" required placeholder="e.g. OFF-0001" />
-                        </div>
-                        <div class="row">
-                          <label>Sex</label>
-                          <select v-model="addForm[mid].sex" required>
-                            <option value="male">male</option>
-                            <option value="female">female</option>
-                            <option value="neutered">neutered</option>
-                          </select>
-                        </div>
-                        <div class="row">
-                          <label>Notes</label>
-                          <input v-model="addForm[mid].notes" placeholder="optional" />
-                        </div>
-                        <button :disabled="adding[mid]">{{ adding[mid] ? 'Adding…' : 'Add offspring' }}</button>
-                        <div v-if="addError[mid]" class="error">{{ addError[mid] }}</div>
-                        <div v-if="addOk[mid]" class="ok">Added.</div>
-                      </form>
-                    </details>
-                  </div>
-
-                  <div v-if="editing[mid]" class="mt">
-                    <details open>
-                      <summary>Edit offspring</summary>
-                      <form @submit.prevent="onEditOffspring(mid)">
-                        <div class="row">
-                          <label>Offspring ID</label>
-                          <input v-model="editForm[mid].offspringId" required />
-                        </div>
-                        <div class="row">
-                          <label>Litter ID</label>
-                          <input v-model="editForm[mid].litterId" placeholder="optional" />
-                        </div>
-                        <div class="row">
-                          <label>Sex</label>
-                          <select v-model="editForm[mid].sex">
-                            <option value="male">male</option>
-                            <option value="female">female</option>
-                            <option value="neutered">neutered</option>
-                          </select>
-                        </div>
-                        <div class="row">
-                          <label>Notes</label>
-                          <input v-model="editForm[mid].notes" placeholder="optional" />
-                        </div>
-                        <button :disabled="saving[mid]">{{ saving[mid] ? 'Saving…' : 'Save changes' }}</button>
-                        <button type="button" class="ml" @click="cancelEdit(mid)">Cancel</button>
-                        <div v-if="saveError[mid]" class="error">{{ saveError[mid] }}</div>
-                        <div v-if="saveOk[mid]" class="ok">Saved.</div>
-                      </form>
-                    </details>
+                        <ul v-if="offspringByLitter[lit.litterId] && offspringByLitter[lit.litterId].length" class="offspring-list">
+                          <li v-for="o in offspringByLitter[lit.litterId]" :key="o.offspringId" class="offspring-item">
+                            <span><strong>{{ o.offspringId }}</strong> — {{ o.sex || 'unknown' }}</span>
+                            <span class="status-pill" :class="statusClass(o)">{{ statusText(o) }}</span>
+                            <span v-if="o.notes" class="muted"> ({{ o.notes }})</span>
+                          </li>
+                        </ul>
+                        <div v-else-if="offspringByLitterLoading[lit.litterId]" class="muted">Loading…</div>
+                        <div v-else-if="offspringByLitterError[lit.litterId]" class="error">{{ offspringByLitterError[lit.litterId] }}</div>
+                        <div v-else><em>No offspring</em></div>
+                      </div>
+                    </template>
+                    <div v-else><em>No litters</em></div>
                   </div>
                 </div>
               </td>
@@ -122,65 +106,139 @@
       <div v-else-if="!mothersLoading">No mothers found.</div>
     </section>
 
-    <section class="mt">
-      <h3>Generate reproduction report</h3>
-      <form @submit.prevent="onGenerateReport">
-        <div class="row">
-          <label>Mother ID</label>
-          <input v-model="reportForm.animal" required placeholder="e.g. M-0001" />
+    <!-- Reports Tab: list existing reports and open by name -->
+    <section class="mt" v-if="activeTab === 'reports'">
+      <h3>Reports</h3>
+      <div class="row">
+        <div v-if="reproNamesError" class="error ml">{{ reproNamesError }}</div>
+      </div>
+
+      <table v-if="reproReportNames.length" class="mt">
+        <thead>
+          <tr>
+            <th>Report name</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="name in reproReportNames" :key="name">
+            <tr class="clickable-row" @click="toggleReproReport(name)">
+              <td>{{ name }}</td>
+              <td>
+                <button class="danger" @click.stop="onDeleteReproReportName(name)" :disabled="reproRowDeleting[name]">
+                  {{ reproRowDeleting[name] ? 'Deleting…' : 'Delete' }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="expandedRepro[name]">
+              <td colspan="2">
+                <div class="report-box">
+                  <div v-if="reproLoadingByName[name]" class="muted">Loading…</div>
+                  <div v-else-if="reproErrorByName[name]" class="error">{{ reproErrorByName[name] }}</div>
+                  <template v-else>
+                    <div class="row" style="align-items:center; gap: 0.5rem;">
+                      <h4 style="margin: 0;">Report</h4>
+                      <button class="ml" @click.stop="onLoadReproSummaryByName(name)" :disabled="reproSummaryLoadingByName[name]">
+                        {{ reproSummaryLoadingByName[name] ? 'Summarizing…' : 'AI summary' }}
+                      </button>
+                      <div v-if="reproSummaryErrorByName[name]" class="error ml">{{ reproSummaryErrorByName[name] }}</div>
+                    </div>
+                    <template v-if="performanceRowsForName(name).length">
+                      <table class="mt">
+                        <thead>
+                          <tr>
+                            <th>Animal</th>
+                            <th>Avg Offspring/Litter</th>
+                            <th>Avg Surviving Offspring/Litter</th>
+                            <th>Survival</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="r in performanceRowsForName(name)" :key="r.animal">
+                            <td>{{ r.animal }}</td>
+                            <td>{{ r.avgOffspringPerLitter != null ? r.avgOffspringPerLitter.toFixed(2) : '-' }}</td>
+                            <td>{{ r.avgSurvivingPerLitter != null ? r.avgSurvivingPerLitter.toFixed(2) : '-' }}</td>
+                            <td>{{ r.survivalRatePct != null ? r.survivalRatePct.toFixed(2) + '%' : '-' }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div class="mt" v-if="reproAiSummaryFor(name)">
+                        <h5>AI Summary</h5>
+                        <p v-if="reproAiSummaryFor(name)?.insights" class="mt">{{ reproAiSummaryFor(name)!.insights }}</p>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="mt" v-if="reproAiSummaryFor(name)">
+                        <h5>AI Summary</h5>
+                        <p v-if="reproAiSummaryFor(name)?.insights" class="mt">{{ reproAiSummaryFor(name)!.insights }}</p>
+                      </div>
+                      <pre v-else class="results-pre">{{ reproReportTextByName[name] || toJson(reproReportObjByName[name]) }}</pre>
+                    </template>
+                  </template>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div v-else-if="!reproNamesLoading" class="muted mt">No reports found.</div>
+      <div v-if="reproDeleteListError" class="error mt">{{ reproDeleteListError }}</div>
+
+      <div v-if="reportObj || reportText" class="report-box mt">
+        <h3>Report</h3>
+        <div class="row mt">
+          <button @click="onLoadSummary" :disabled="summaryLoading || !lookup.reportName">{{ summaryLoading ? 'Summarizing…' : 'AI summary' }}</button>
+          <div v-if="summaryError" class="error ml">{{ summaryError }}</div>
         </div>
-        <div class="row">
-          <label>Start</label>
-          <input type="date" v-model="reportForm.startDateRange" required />
-        </div>
-        <div class="row">
-          <label>End</label>
-          <input type="date" v-model="reportForm.endDateRange" required />
-        </div>
-        <div class="row">
-          <label>Report name</label>
-          <input v-model="reportForm.reportName" required placeholder="e.g. Repro-Oct-2025" />
-        </div>
-        <button :disabled="generating">{{ generating ? 'Generating…' : 'Generate' }}</button>
-        <div v-if="reportError" class="error">{{ reportError }}</div>
-      </form>
-      <div v-if="reportResults" class="report-box mt">
-        <h4>Report Results</h4>
-        <pre class="results-pre">{{ reportResults }}</pre>
+        <template v-if="performanceRowsMain.length">
+          <table class="mt">
+            <thead>
+              <tr>
+                <th>Animal</th>
+                <th>Avg Offspring/Litter</th>
+                <th>Avg Surviving Offspring/Litter</th>
+                <th>Survival</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in performanceRowsMain" :key="r.animal">
+                <td>{{ r.animal }}</td>
+                <td>{{ r.avgOffspringPerLitter != null ? r.avgOffspringPerLitter.toFixed(2) : '-' }}</td>
+                <td>{{ r.avgSurvivingPerLitter != null ? r.avgSurvivingPerLitter.toFixed(2) : '-' }}</td>
+                <td>{{ r.survivalRatePct != null ? r.survivalRatePct.toFixed(2) + '%' : '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+        <pre v-else class="results-pre">{{ reportText || toJson(reportObj) }}</pre>
       </div>
     </section>
 
-    <section class="mt">
-      <h3>Lookup report</h3>
-      <form @submit.prevent="onLoadReport">
-        <div class="row">
-          <label>Report name</label>
-          <input v-model="lookup.reportName" required placeholder="e.g. Repro-Oct-2025" />
-          <button :disabled="lookupLoading">{{ lookupLoading ? 'Loading…' : 'Load report' }}</button>
-        </div>
-        <div v-if="lookupError" class="error">{{ lookupError }}</div>
-      </form>
-      <div v-if="reportText" class="report-box mt">
-        <h4>Report</h4>
-        <pre class="results-pre">{{ reportText }}</pre>
-        <div class="row mt">
-          <button @click="onLoadSummary" :disabled="summaryLoading">{{ summaryLoading ? 'Summarizing…' : 'AI summary' }}</button>
-          <div v-if="summaryError" class="error">{{ summaryError }}</div>
-        </div>
-        <div v-if="summaryText" class="summary-box mt">
-          <h4>AI Summary</h4>
-          <pre class="results-pre">{{ summaryText }}</pre>
-        </div>
-      </div>
-    </section>
+    
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, watch, getCurrentInstance, computed } from 'vue'
 import { postJson } from '@/utils/api'
+import { formatDateMDY } from '@/utils/format'
+import { normalizeAiSummary } from '@/utils/aiSummary'
+// Tabs
+const props = defineProps<{ initialTab?: 'mothers' | 'reports' }>()
+const activeTab = ref<'mothers' | 'reports'>(
+  props.initialTab === 'reports' ? 'reports' : 'mothers'
+)
+watch(() => props.initialTab, (v) => {
+  if (v) activeTab.value = v === 'reports' ? 'reports' : 'mothers'
+})
+const formatDate = formatDateMDY
+function formatAdg(v: any) {
+  const n = Number(v)
+  return isFinite(n) ? n.toFixed(3) : '-'
+}
 
-type Offspring = { offspringId: string; sex?: string; notes?: string; litterId?: string }
+
+type Offspring = { offspringId: string; sex?: string; notes?: string; litterId?: string; isAlive?: boolean; survivedTillWeaning?: boolean; weanDate?: string; deathDate?: string }
 
 // Add mother state
 const addMotherForm = ref<{ motherId: string }>({ motherId: '' })
@@ -210,25 +268,73 @@ async function onAddMother() {
 
 // Mothers listing and offspring expand
 const mothers = ref<string[]>([])
-const mothersLoading = ref(false)
+const mothersLoading = ref(true)
 const mothersError = ref<string | null>(null)
 const expanded = ref<Record<string, boolean>>({})
-const offspringByMother = ref<Record<string, Offspring[]>>({})
-const offspringLoading = ref<Record<string, boolean>>({})
-const offspringError = ref<Record<string, string | undefined>>({})
+const removingMother = ref<Record<string, boolean>>({})
+// Grouped view: litters per mother and offspring per litter
+type Litter = { litterId: string; notes?: string; internalLitterId?: string; [k: string]: any }
+const littersByMother = ref<Record<string, Litter[]>>({})
+const littersLoading = ref<Record<string, boolean>>({})
+const littersError = ref<Record<string, string | undefined>>({})
+const offspringByLitter = ref<Record<string, Offspring[]>>({})
+const offspringByLitterLoading = ref<Record<string, boolean>>({})
+const offspringByLitterError = ref<Record<string, string | undefined>>({})
+// Selection for reports
+const selectMothers = ref(false)
+const selectedMothers = ref<Record<string, boolean>>({})
+const showBatch = ref(false)
+function toggleSelectMothers() { selectMothers.value = !selectMothers.value }
+function isMotherSelected(id: string) { return !!selectedMothers.value[id] }
+function toggleMotherSelected(id: string) { selectedMothers.value[id] = !selectedMothers.value[id] }
+const selectedMotherIds = computed(() => Object.keys(selectedMothers.value).filter(k => selectedMothers.value[k]))
+const selectedMotherCount = computed(() => selectedMotherIds.value.length)
+const batch = ref<{ start: string; end: string; name: string }>({
+  start: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().slice(0, 10),
+  end: new Date().toISOString().slice(0, 10),
+  name: ''
+})
+const batching = ref(false)
+const batchResults = ref<string[]>([])
+const batchError = ref<string | null>(null)
+async function onGenerateBatchSelected() {
+  batchError.value = null
+  batchResults.value = []
+  if (!selectedMotherIds.value.length) { batchError.value = 'Select at least one mother'; return }
+  if (!batch.value.start || !batch.value.end || !batch.value.name) { batchError.value = 'Start, End, and Report name are required'; return }
+  batching.value = true
+  try {
+    const base = batch.value.name.trim()
+    let hadFail = false
+    for (const id of selectedMotherIds.value) {
+      try {
+        const payload = { target: id, startDateRange: batch.value.start, endDateRange: batch.value.end, name: base }
+        await postJson<typeof payload, any>('/api/ReproductionTracking/generateReport', payload)
+        batchResults.value.push(`OK: ${id}`)
+      } catch (e: any) {
+        batchResults.value.push(`FAIL ${id}: ${e?.message ?? String(e)}`)
+        hadFail = true
+      }
+    }
+    // If all succeeded, clear selection and collapse the batch UI
+    if (!hadFail) {
+      selectedMothers.value = {}
+      showBatch.value = false
+      // Automatically exit selection mode after successful batch
+      selectMothers.value = false
+    }
+  } finally {
+    batching.value = false
+  }
+}
 
-// Add offspring per-mother state
-const addForm = ref<Record<string, { litterId: string; offspringId: string; sex: string; notes?: string }>>({})
-const adding = ref<Record<string, boolean>>({})
-const addError = ref<Record<string, string | undefined>>({})
-const addOk = ref<Record<string, boolean>>({})
+// Overview page is read-only: no add/edit state needed here
 
-// Edit offspring per-mother state
-const editing = ref<Record<string, boolean>>({})
-const editForm = ref<Record<string, { offspringId: string; litterId?: string; sex?: string; notes?: string }>>({})
-const saving = ref<Record<string, boolean>>({})
-const saveError = ref<Record<string, string | undefined>>({})
-const saveOk = ref<Record<string, boolean>>({})
+// Key helper retained only if needed later
+function getLitterKey(motherId: string, lit: Litter) {
+  const internal = lit.internalLitterId || ''
+  return `${motherId}|${internal || lit.litterId}`
+}
 
 async function loadMothers() {
   mothersLoading.value = true
@@ -239,10 +345,24 @@ async function loadMothers() {
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
       if (Array.isArray((res as any).mothers)) list = (res as any).mothers
+      else if (Array.isArray((res as any).mother)) list = (res as any).mother
       else if (Array.isArray((res as any).items)) list = (res as any).items
       else if (Array.isArray((res as any).data)) list = (res as any).data
     }
-    mothers.value = (list as any[]).map(x => String(x)).filter(Boolean)
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+    mothers.value = (list as any[])
+      .map(x => {
+        if (typeof x === 'string' || typeof x === 'number') return String(x)
+        if (x && typeof x === 'object') {
+          const obj: any = x
+          // Prefer externalId for mother identity
+          const id = obj.externalId ?? obj.ExternalId ?? obj.externalID ?? obj.motherExternalId ?? obj.MotherExternalId ?? obj.motherId ?? obj.MotherId ?? obj.id ?? obj.Id ?? obj._id
+          return id ? String(id) : ''
+        }
+        return ''
+      })
+      .filter(Boolean)
+      .sort((a, b) => collator.compare(a, b))
   } catch (e: any) {
     mothersError.value = e?.message ?? String(e)
   } finally {
@@ -250,22 +370,111 @@ async function loadMothers() {
   }
 }
 
-function toggleMother(motherId: string) {
-  expanded.value[motherId] = !expanded.value[motherId]
-  if (expanded.value[motherId] && !offspringByMother.value[motherId] && !offspringLoading.value[motherId]) {
-    loadOffspring(motherId)
+onMounted(() => {
+  // Auto-load mothers when the view opens
+  loadMothers()
+})
+
+// Auto-load reproduction report names when the Reports tab opens
+watch(() => activeTab.value, (t) => {
+  if (t === 'reports' && !reproReportNames.value.length && !reproNamesLoading.value) {
+    loadReproReportNames()
   }
-  // ensure forms exist
-  if (!addForm.value[motherId]) addForm.value[motherId] = { litterId: '', offspringId: '', sex: 'female', notes: '' }
-  if (!editForm.value[motherId]) editForm.value[motherId] = { offspringId: '', litterId: '', sex: undefined, notes: '' }
+})
+
+// Navigation to mother details
+const inst = getCurrentInstance()
+const router: any = (inst as any)?.proxy?.$router
+function goMother(motherId: string) {
+  const path = `/mothers/${encodeURIComponent(motherId)}`
+  if (router && typeof router.push === 'function') router.push(path)
+  else window.location.href = path
 }
 
-async function loadOffspring(motherId: string) {
-  offspringLoading.value[motherId] = true
-  offspringError.value[motherId] = undefined
+function toggleMother(motherId: string) {
+  expanded.value[motherId] = !expanded.value[motherId]
+  if (expanded.value[motherId] && !littersByMother.value[motherId] && !littersLoading.value[motherId]) {
+    loadLitters(motherId)
+  }
+  // ensure forms exist
+  // read-only: no form scaffolding
+}
+// read-only: no add litter state
+
+// read-only: no add litter function
+
+// read-only: no per-litter add toggles
+
+// read-only: no add offspring from overview
+
+async function removeMother(motherId: string) {
+  const ok = confirm(`Remove mother ${motherId}?`)
+  if (!ok) return
+  removingMother.value[motherId] = true
+  try {
+    await postJson('/api/ReproductionTracking/removeMother', { motherId })
+    mothers.value = mothers.value.filter(m => m !== motherId)
+    // cleanup expanded/litter state
+    delete expanded.value[motherId]
+    delete littersByMother.value[motherId]
+    delete littersLoading.value[motherId]
+    delete littersError.value[motherId]
+  } catch (e: any) {
+    mothersError.value = e?.message ?? String(e)
+  } finally {
+    removingMother.value[motherId] = false
+  }
+}
+
+async function loadLitters(motherId: string) {
+  littersLoading.value[motherId] = true
+  littersError.value[motherId] = undefined
   try {
     const payload = { motherId }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_getOffspringForMother', payload)
+  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listLittersByMother', payload)
+    let list: any = []
+    if (Array.isArray(res)) list = res
+    else if (res && typeof res === 'object') {
+      if (Array.isArray((res as any).litters)) list = (res as any).litters
+      else if (Array.isArray((res as any).litter)) list = (res as any).litter
+      else if (Array.isArray((res as any).items)) list = (res as any).items
+      else if (Array.isArray((res as any).data)) list = (res as any).data
+    }
+  const normLitters: Litter[] = (list as any[]).map(l => {
+      const isNumeric = (v: any) => typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))
+      // Prefer a human-friendly numeric ID if present
+      let id: any = (l as any).id ?? (l as any).Id ?? (l as any).ID
+      if (!isNumeric(id)) id = (l as any).litterNumber ?? (l as any).LitterNumber ?? (l as any).number ?? (l as any).no ?? (l as any).litterNo ?? (l as any).LitterNo
+      const internal = (l as any).litterId ?? (l as any).LitterId ?? (l as any)._id
+      if (!isNumeric(id)) id = internal
+      if (id == null || String(id) === '') id = internal
+      const litterId = id != null ? String(id) : ''
+      const date = (l as any).birthDate ?? (l as any).BirthDate ?? (l as any).date ?? (l as any).Date ?? undefined
+      return {
+        ...l,
+        litterId,
+        notes: (l as any).notes ?? (l as any).Notes,
+        internalLitterId: internal != null ? String(internal) : undefined,
+        date,
+      }
+    }).filter((l: Litter) => !!l.litterId)
+    littersByMother.value[motherId] = normLitters
+    // Load offspring for each litter (in parallel)
+    await Promise.all(normLitters.map(l => loadOffspringByLitter(l.litterId)))
+  } catch (e: any) {
+    littersError.value[motherId] = e?.message ?? String(e)
+  } finally {
+    littersLoading.value[motherId] = false
+  }
+}
+
+async function loadOffspringByLitter(litterId: string) {
+  if (!litterId) return
+  offspringByLitterLoading.value[litterId] = true
+  offspringByLitterError.value[litterId] = undefined
+  try {
+    const payload = { litterId }
+  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listOffspringByLitter', payload)
     let list: any = []
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
@@ -273,125 +482,308 @@ async function loadOffspring(motherId: string) {
       else if (Array.isArray((res as any).items)) list = (res as any).items
       else if (Array.isArray((res as any).data)) list = (res as any).data
     }
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     const norm = (list as any[]).map(o => ({
-      offspringId: String(o.offspringId ?? o.id ?? o.OffspringId ?? ''),
+      offspringId: String(o.externalId ?? o.ExternalId ?? o.offspringId ?? o.OffspringId ?? o.id ?? o.Id ?? o._id ?? ''),
       sex: o.sex ?? o.Sex,
       notes: o.notes ?? o.Notes,
-      litterId: o.litterId ?? o.LitterId
-    })).filter((o: Offspring) => !!o.offspringId)
-    offspringByMother.value[motherId] = norm
+      litterId: String(o.litterId ?? o.LitterId ?? litterId),
+      isAlive: o.isAlive ?? o.alive ?? o.Alive,
+      survivedTillWeaning: o.survivedTillWeaning ?? o.survivedUntilWeaning ?? o.weaned,
+      weanDate: o.weanDate ?? o.weanedDate ?? o.dateWeaned,
+      deathDate: o.deathDate ?? o.dateOfDeath ?? o.diedDate
+    }))
+      .filter((o: Offspring) => !!o.offspringId)
+      .sort((a: Offspring, b: Offspring) => collator.compare(a.offspringId, b.offspringId))
+    offspringByLitter.value[litterId] = norm
   } catch (e: any) {
-    offspringError.value[motherId] = e?.message ?? String(e)
+    offspringByLitterError.value[litterId] = e?.message ?? String(e)
   } finally {
-    offspringLoading.value[motherId] = false
+    offspringByLitterLoading.value[litterId] = false
   }
 }
 
-async function onAddOffspring(motherId: string) {
-  addError.value[motherId] = undefined
-  addOk.value[motherId] = false
-  adding.value[motherId] = true
+function statusText(o: Offspring) {
+  if (o.deathDate || o.isAlive === false) return 'Died before weaning'
+  if (o.weanDate || o.survivedTillWeaning === true) return 'Weaned'
+  if (o.isAlive === true && o.survivedTillWeaning === false) return 'Not yet weaned'
+  return '—'
+}
+function statusClass(o: Offspring) {
+  const t = statusText(o)
+  if (t === 'Weaned') return 'ok'
+  if (t === 'Died before weaning') return 'danger'
+  if (t === 'Not yet weaned') return 'warn'
+  return 'muted'
+}
+
+// read-only: no add offspring form
+
+// read-only: no edit offspring
+
+// No separate reports tab: creation and viewing occur inline or via details pages
+// Reports tab state and actions
+const reproReportNames = ref<string[]>([])
+const reproNamesLoading = ref(false)
+const reproNamesError = ref<string | null>(null)
+const reproRowDeleting = ref<Record<string, boolean>>({})
+const reproDeleteListError = ref<string | null>(null)
+// Optional per-row dropdown state to support closing on navigation
+const reproRowMenuOpen = ref<Record<string, boolean>>({})
+const expandedRepro = ref<Record<string, boolean>>({})
+const reproLoadingByName = ref<Record<string, boolean>>({})
+const reproErrorByName = ref<Record<string, string | null>>({})
+const reproReportObjByName = ref<Record<string, any | null>>({})
+const reproReportTextByName = ref<Record<string, string | null>>({})
+const reproSummaryTextByName = ref<Record<string, string | null>>({})
+const reproSummaryLoadingByName = ref<Record<string, boolean>>({})
+const reproSummaryErrorByName = ref<Record<string, string | null>>({})
+
+async function loadReproReportNames() {
+  reproNamesLoading.value = true
+  reproNamesError.value = null
   try {
-    const form = addForm.value[motherId]
-    const payload = {
-      litterId: form.litterId.trim(),
-      offspringId: form.offspringId.trim(),
-      sex: form.sex,
-      notes: (form.notes || '').trim() || undefined,
-      // include motherId to help servers that accept it
-      motherId
+    const res = await postJson<any, any>('/api/ReproductionTracking/_listReports', {})
+
+    function asArray(maybe: any): any[] {
+      return Array.isArray(maybe) ? maybe : []
     }
-    await postJson<typeof payload, any>('/api/ReproductionTracking/recordOffspring', payload)
-    addOk.value[motherId] = true
-    // refresh offspring list
-    offspringByMother.value[motherId] = []
-    await loadOffspring(motherId)
-    // clear minimal fields for another add
-    addForm.value[motherId].offspringId = ''
+    function tryParseJson(text: any): any {
+      if (typeof text !== 'string') return text
+      try { return JSON.parse(text) } catch {
+        // try loose splits for simple csv/newline lists
+        const s = text.trim()
+        if (s.includes('\n')) return s.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
+        if (s.includes(',')) return s.split(',').map(x => x.trim()).filter(Boolean)
+        return text
+      }
+    }
+    function extractList(body: any): any[] {
+      const seen = new Set<any>()
+      function walk(node: any, depth = 0): any[] | null {
+        if (node == null || depth > 3 || seen.has(node)) return null
+        seen.add(node)
+        const b = tryParseJson(node)
+        if (Array.isArray(b)) return b
+        if (b && typeof b === 'object') {
+          const keys = ['names','Names','reports','Reports','reportNames','items','Items','data','Data','list','List','result','Result','results','Results']
+          for (const k of keys) {
+            if (k in b) {
+              const v = (b as any)[k]
+              const arr = walk(v, depth + 1)
+              if (Array.isArray(arr)) return arr
+            }
+          }
+          // last resort: scan all properties for an array of strings
+          for (const v of Object.values(b)) {
+            const arr = walk(v, depth + 1)
+            if (Array.isArray(arr)) return arr
+          }
+        }
+        return null
+      }
+      return walk(body) || []
+    }
+    const rawList = extractList(res)
+    const names = rawList.map(x => {
+      if (typeof x === 'string' || typeof x === 'number') return String(x)
+      if (x && typeof x === 'object') return String((x as any).name ?? (x as any).reportName ?? (x as any).id ?? (x as any).Id ?? (x as any)._id ?? '')
+      return ''
+    }).filter(Boolean)
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+    reproReportNames.value = names.sort((a, b) => collator.compare(a, b))
   } catch (e: any) {
-    addError.value[motherId] = e?.message ?? String(e)
+    reproNamesError.value = e?.message ?? String(e)
   } finally {
-    adding.value[motherId] = false
+    reproNamesLoading.value = false
   }
 }
 
-function startEditOffspring(motherId: string, o: Offspring) {
-  editing.value[motherId] = true
-  editForm.value[motherId] = { offspringId: o.offspringId, litterId: o.litterId, sex: o.sex, notes: o.notes }
+function openName(name: string) {
+  // Close any open dropdown for report rows when navigating to a report
+  reproRowMenuOpen.value = {}
+  lookup.value.reportName = name
+  onLoadReport()
 }
 
-function cancelEdit(motherId: string) {
-  editing.value[motherId] = false
-  saveError.value[motherId] = undefined
-  saveOk.value[motherId] = false
+function toggleReproReport(name: string) {
+  reproRowMenuOpen.value = {}
+  expandedRepro.value[name] = !expandedRepro.value[name]
+  if (expandedRepro.value[name] && !reproReportObjByName.value[name] && !reproReportTextByName.value[name] && !reproLoadingByName.value[name]) {
+    loadReproReportByName(name)
+  }
 }
 
-async function onEditOffspring(motherId: string) {
-  saveError.value[motherId] = undefined
-  saveOk.value[motherId] = false
-  saving.value[motherId] = true
+async function loadReproReportByName(name: string) {
+  reproLoadingByName.value[name] = true
+  reproErrorByName.value[name] = null
   try {
-    const form = editForm.value[motherId]
-    const payload: any = {
-      offspringId: form.offspringId.trim(),
-      sex: form.sex,
-      notes: (form.notes || '').trim() || undefined
+    const payload = { reportName: name.trim() }
+    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    let text: string | null = null
+    let obj: any | null = null
+    if (typeof res === 'string') {
+      text = res
+      try {
+        const parsed = JSON.parse(res)
+        const candidate: any = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).data === 'object' && !Array.isArray((parsed as any).data)) ? (parsed as any).data : parsed
+        if (candidate && (candidate.results || candidate.reportName || candidate.aiGeneratedSummary)) obj = candidate
+      } catch {}
+    } else if (res && typeof res === 'object') {
+      const r: any = res
+      text = r.Results ?? r.results ?? r.report ?? r.text ?? r.content ?? r.data ?? null
+      if (r && (r.results || r.reportName || r.aiGeneratedSummary)) obj = r
+      if (!obj && typeof text === 'string') {
+        try {
+          const parsed = JSON.parse(text)
+          const inner: any = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).data === 'object' && !Array.isArray((parsed as any).data)) ? (parsed as any).data : parsed
+          if (inner && (inner.results || inner.reportName || inner.aiGeneratedSummary)) obj = inner
+        } catch {}
+      }
     }
-    if (form.litterId) payload.litterId = form.litterId.trim()
-    await postJson<typeof payload, any>('/api/ReproductionTracking/updateOffspring', payload)
-    saveOk.value[motherId] = true
-    // refresh offspring list
-    offspringByMother.value[motherId] = []
-    await loadOffspring(motherId)
-    editing.value[motherId] = false
+    reproReportTextByName.value[name] = text ?? JSON.stringify(res, null, 2)
+    reproReportObjByName.value[name] = obj
   } catch (e: any) {
-    saveError.value[motherId] = e?.message ?? String(e)
+    reproErrorByName.value[name] = e?.message ?? String(e)
   } finally {
-    saving.value[motherId] = false
+    reproLoadingByName.value[name] = false
   }
 }
 
-// Generate report
-const reportForm = ref<{ animal: string; startDateRange: string; endDateRange: string; reportName: string }>(
-  {
-    animal: '',
-    startDateRange: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().slice(0, 10),
-    endDateRange: new Date().toISOString().slice(0, 10),
-    reportName: ''
-  }
-)
-const generating = ref(false)
-const reportError = ref<string | null>(null)
-const reportResults = ref<string | null>(null)
+function reproAiSummaryFor(name: string) {
+  const obj = reproReportObjByName.value[name]
+  const sumText = reproSummaryTextByName.value[name]
+  if (obj && obj.aiGeneratedSummary) return normalizeAiSummary(obj.aiGeneratedSummary)
+  if (sumText) return normalizeAiSummary(sumText)
+  return null
+}
 
-async function onGenerateReport() {
-  reportError.value = null
-  reportResults.value = null
-  if (!reportForm.value.animal || !reportForm.value.startDateRange || !reportForm.value.endDateRange || !reportForm.value.reportName) return
-  generating.value = true
+async function onLoadReproSummaryByName(name: string) {
+  const reportName = String(name || '').trim()
+  if (!reportName) return
+  reproSummaryErrorByName.value[reportName] = null
+  reproSummaryLoadingByName.value[reportName] = true
   try {
-    const payload = { ...reportForm.value }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/generateReport', payload)
-    let results: string | null = null
-    if (res && typeof res === 'object') {
-      results = (res.Results ?? res.results ?? res.output ?? res.text ?? null) as any
+    const payload = { reportName }
+  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    let text: string | null = null
+    if (typeof res === 'string') text = res
+    else if (res && typeof res === 'object') {
+      const r: any = res
+      text = r.summary ?? r.Summary ?? r.result ?? r.text ?? r.content ?? null
+      if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
-    reportResults.value = results ?? JSON.stringify(res, null, 2)
+    reproSummaryTextByName.value[reportName] = text ?? JSON.stringify(res, null, 2)
   } catch (e: any) {
-    reportError.value = e?.message ?? String(e)
+    reproSummaryErrorByName.value[reportName] = e?.message ?? String(e)
   } finally {
-    generating.value = false
+    reproSummaryLoadingByName.value[reportName] = false
   }
 }
 
-// Lookup report + AI summary
+function toJson(v: any) {
+  try { return v == null ? '' : JSON.stringify(v, null, 2) } catch { return String(v) }
+}
+
+// Performance report parsing
+type PerfRow = { animal: string; litters: number; offspring: number; avgOffspringPerLitter: number | null; avgSurvivingPerLitter: number | null; survivalRatePct: number | null }
+const perfRe = /Performance for\s+(.+?)\s*\(.*?\):\s*Litters:\s*(\d+),\s*Offspring:\s*(\d+),\s*Weaning Survival:\s*([\d.]+)%/i
+function round(n: number, d = 2) { return Math.round(n * 10 ** d) / 10 ** d }
+function toLines(input: any): string[] {
+  // Accept array of strings, a single string (possibly JSON or newline-delimited), or arrays nested in common keys
+  if (Array.isArray(input)) return input.map(x => String(x))
+  if (typeof input === 'string') {
+    // Try JSON array first
+    try {
+      const parsed = JSON.parse(input)
+      if (Array.isArray(parsed)) return parsed.map(x => String(x))
+    } catch {}
+    const s = input.trim()
+    if (!s) return []
+    // Split by newlines when present
+    if (s.includes('\n')) return s.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
+    // Otherwise treat as a single line
+    return [s]
+  }
+  if (input && typeof input === 'object') {
+    const keys = ['lines','results','data','items','report','content','text','Results','Data','Items']
+    for (const k of keys) {
+      if (k in input) {
+        const v: any = (input as any)[k]
+        const l = toLines(v)
+        if (l.length) return l
+      }
+    }
+  }
+  return []
+}
+function parsePerformance(input: any): PerfRow[] {
+  const lines = toLines(input)
+  if (!lines.length) return []
+  const rows: PerfRow[] = []
+  for (const line of lines) {
+    const m = String(line).match(perfRe)
+    if (!m) continue
+    const [, animal, littersStr, offspringStr, survivalStr] = m
+    const litters = Number(littersStr)
+    const offspring = Number(offspringStr)
+    const survivalRatePct = Number(survivalStr)
+    const avg = litters > 0 ? round(offspring / litters, 2) : null
+    const survPct = isFinite(survivalRatePct) ? round(survivalRatePct, 2) : null
+    const survivors = survPct != null ? (offspring * (survPct / 100)) : null
+    const avgSurv = (survivors != null && litters > 0) ? round(survivors / litters, 2) : null
+    rows.push({ animal: String(animal).trim(), litters, offspring, avgOffspringPerLitter: avg, avgSurvivingPerLitter: avgSurv, survivalRatePct: survPct })
+  }
+  return rows
+}
+
+function performanceRowsForName(name: string): PerfRow[] {
+  const txt = reproReportTextByName.value[name]
+  const obj = reproReportObjByName.value[name]
+  const r1 = parsePerformance(txt)
+  if (r1.length) return r1
+  return parsePerformance(obj)
+}
+
+const performanceRowsMain = computed<PerfRow[]>(() => {
+  const r1 = parsePerformance(reportText.value)
+  if (r1.length) return r1
+  return parsePerformance(reportObj.value)
+})
+
+async function onDeleteReproReportName(name: string) {
+  reproDeleteListError.value = null
+  const reportName = String(name || '').trim()
+  if (!reportName) return
+  const ok = confirm(`Delete report "${reportName}"? This cannot be undone.`)
+  if (!ok) return
+  reproRowDeleting.value[reportName] = true
+  try {
+    const payload = { reportName }
+    await postJson<typeof payload, any>('/api/ReproductionTracking/deleteReport', payload)
+    reproReportNames.value = reproReportNames.value.filter(n => n !== reportName)
+    if (!reproReportNames.value.length) await loadReproReportNames()
+  } catch (e: any) {
+    reproDeleteListError.value = e?.message ?? String(e)
+  } finally {
+    reproRowDeleting.value[reportName] = false
+  }
+}
+
 const lookup = ref<{ reportName: string }>({ reportName: '' })
 const lookupLoading = ref(false)
 const lookupError = ref<string | null>(null)
 const reportText = ref<string | null>(null)
+const reportObj = ref<any | null>(null)
+const summaryText = ref<string | null>(null)
 const summaryLoading = ref(false)
 const summaryError = ref<string | null>(null)
-const summaryText = ref<string | null>(null)
+const aiSummaryObj = computed(() => {
+  if (reportObj.value && reportObj.value.aiGeneratedSummary) return normalizeAiSummary(reportObj.value.aiGeneratedSummary)
+  if (summaryText.value) return normalizeAiSummary(summaryText.value)
+  return null
+})
+
 
 async function onLoadReport() {
   lookupError.value = null
@@ -401,7 +793,8 @@ async function onLoadReport() {
   lookupLoading.value = true
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_getReportByName', payload)
+    // Canonical endpoint for viewing reproduction reports
+    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
     let text: string | null = null
     if (typeof res === 'string') {
       text = res
@@ -410,6 +803,11 @@ async function onLoadReport() {
       text = r.Results ?? r.results ?? r.report ?? r.text ?? r.content ?? r.data ?? null
       if (text && typeof text !== 'string') {
         text = JSON.stringify(text, null, 2)
+      }
+      if (r && (r.results || r.reportName || r.aiGeneratedSummary)) {
+        reportObj.value = r
+      } else {
+        reportObj.value = null
       }
     }
     reportText.value = text ?? JSON.stringify(res, null, 2)
@@ -420,6 +818,8 @@ async function onLoadReport() {
   }
 }
 
+// delete handled at list row level; no delete button in report view
+
 async function onLoadSummary() {
   summaryError.value = null
   summaryText.value = null
@@ -427,7 +827,7 @@ async function onLoadSummary() {
   summaryLoading.value = true
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/aiSummary', payload)
+  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
     let text: string | null = null
     if (typeof res === 'string') text = res
     else if (res && typeof res === 'object') {
@@ -442,6 +842,8 @@ async function onLoadSummary() {
     summaryLoading.value = false
   }
 }
+
+// Offspring event forms removed; events are handled elsewhere
 </script>
 
 <style scoped>
@@ -450,7 +852,47 @@ async function onLoadSummary() {
 .offspring-box { background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 0.75rem }
 .offpsring-list { list-style: none; padding: 0 }
 .offspring-item { display: flex; align-items: center; gap: 0.5rem }
+.status-pill { padding: 0.1rem 0.4rem; border-radius: 999px; font-size: 0.75rem }
+.status-pill.ok { background: var(--olive-100); color: var(--tone-olive) }
+.status-pill.warn { background: var(--peach-100); color: var(--tone-clay) }
+.status-pill.danger { background: var(--danger-bg); color: var(--danger) }
+.danger { color: #b00020 }
 .ml { margin-left: 0.5rem }
+.small { font-size: 0.85rem }
+.litter-block { border-top: 1px dashed #ddd; padding: 0.5rem 0 }
+.litter-header { display: flex; align-items: center; gap: 0.5rem }
 .summary-box { background: #f6faff; border: 1px solid #e0f0ff; border-radius: 6px; padding: 0.75rem }
 .report-box { background: #f9f9f9; border: 1px solid #eee; border-radius: 6px; padding: 0.75rem }
+/* Tabs - segmented control style */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+  padding: 0.25rem;
+  background: var(--tabs-bg, #fff);
+  border: 1px solid var(--divider, #e5e7eb);
+  border-radius: 8px;
+}
+.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  color: var(--text, #1f2937);
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.tabs .tab:nth-child(odd) { background: var(--tab-alt-a); }
+.tabs .tab:nth-child(even) { background: var(--tab-alt-b); }
+.tab:hover { background: #fff; border-color: var(--divider, #e5e7eb); }
+.tab.active {
+  background: #fff;
+  border-color: var(--primary, #2e7d32);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.card.sub { padding: 1rem; }
+.clickable-row { cursor: pointer }
+.clickable-row:hover { background: var(--surface-2, #fafafa) }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem }
 </style>

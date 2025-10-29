@@ -10,6 +10,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { getJson } from '@/utils/api'
 
 const loading = ref(false)
 const result = ref<string | null>(null)
@@ -20,10 +21,8 @@ async function callApi() {
   result.value = null
   error.value = null
   try {
-    const res = await fetch('/api/hello')
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
-    const data = await res.text()
-    result.value = data
+    const data = await getJson<string>('/api/hello')
+    result.value = typeof data === 'string' ? data : JSON.stringify(data)
   } catch (err: any) {
     error.value = err?.message ?? String(err)
   } finally {

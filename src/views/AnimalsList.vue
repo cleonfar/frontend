@@ -1,5 +1,5 @@
 <template>
-  <div class="card">
+  <div class="card root-card">
     <h2>Registered Animals</h2>
     <div v-if="loading">Loading...</div>
     <div v-if="error" class="error">Error: {{ error }}</div>
@@ -27,7 +27,7 @@
             </td>
             <td>{{ a.species }}</td>
             <td>{{ a.sex }}</td>
-            <td>{{ a.birthDate }}</td>
+            <td>{{ formatDate(a.birthDate) }}</td>
             <td>{{ a.breed ?? '-' }}</td>
             <td class="actions-cell">
               <button @click="toggleDetails(a.id)">{{ detailsMap[a.id] ? 'Hide' : 'Details' }}</button>
@@ -56,6 +56,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { postJson } from '@/utils/api'
+import { formatDateMDY } from '@/utils/format'
+
+const formatDate = formatDateMDY
 
 type Animal = { id: string; species: string; sex: string; birthDate: string; breed?: string; notes?: string }
 
@@ -81,7 +84,10 @@ async function fetchFromBackend() {
     else if (Array.isArray(res.items)) list = res.items
   }
 
-  animals.value = list.map(normalizeAnimal)
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+  animals.value = list
+    .map(normalizeAnimal)
+    .sort((a, b) => collator.compare(a.id || '', b.id || ''))
   } catch (err: any) {
     error.value = err?.message ?? String(err)
   } finally {
@@ -122,11 +128,15 @@ function extractId(a: any): string | undefined {
   if (typeof a === 'string' || typeof a === 'number') return String(a)
   // Direct common candidates
   const direct = (
-    a.id ?? a.ID ?? a.Id ?? a._id ??
-    a.animalId ?? a.animalID ?? a.AnimalId ?? a.AnimalID ?? a.animal_id ??
+    // Prefer AnimalID style first
+    a.AnimalID ?? a.AnimalId ?? a.animalID ?? a.animalId ?? a.animal_id ??
+    // Then other common explicit IDs (exclude _id until last resort)
+    a.id ?? a.ID ?? a.Id ??
     a.identityId ?? a.identityID ?? a.IdentityId ?? a.IdentityID ??
     a.uid ?? a.UUID ?? a.uuid ?? a.uniqueId ?? a.uniqueID ??
-    a.animal ?? a.name ?? a.code ?? a.animalCode ?? a.identifier ?? a.tag ?? a.earTag ?? a.ear_tag ?? a.identity
+    a.animal ?? a.name ?? a.code ?? a.animalCode ?? a.identifier ?? a.tag ?? a.earTag ?? a.ear_tag ?? a.identity ??
+    // Last resort: backend object key
+    a._id
   )
   if (direct != null) return String(direct)
 
