@@ -1,7 +1,12 @@
 import { setDiag } from '@/utils/diag'
 import { getCurrentUsername } from '@/utils/auth'
 
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string) || 'http://127.0.0.1:8000'
+// Base API URL strategy:
+// - In production (Render), set VITE_API_BASE_URL to your deployed backend URL + '/api'
+//   e.g. https://assignment4-xger.onrender.com/api
+// - In local dev, leave it undefined so we default to proxying via Vite with relative '/api' paths
+//   (vite.config.ts proxies '/api' -> http://127.0.0.1:8000)
+const API_BASE = (import.meta.env as any).VITE_API_BASE_URL as string | undefined
 
 async function doFetch(input: RequestInfo, init?: RequestInit) {
   return fetch(input, init)
@@ -46,8 +51,20 @@ async function parseResponse<T>(res: Response): Promise<{ ok: boolean; data?: T;
   return { ok: true, data: text as unknown as T }
 }
 
+function joinBase(base: string | undefined, path: string) {
+  if (!base) return path
+  const b = base.endsWith('/') ? base.slice(0, -1) : base
+  const p = path.startsWith('/') ? path : `/${path}`
+  // Avoid double '/api' if callers include '/api' and base already ends with '/api'
+  if (b.endsWith('/api') && p.startsWith('/api/')) {
+    return b + p.substring(4) // drop leading '/api'
+  }
+  return b + p
+}
+
 function makeFullUrl(url: string) {
-  return `${BACKEND_URL}${url.startsWith('/') ? '' : '/'}${url}`
+  // If API_BASE is provided (production), build absolute; else return relative for Vite proxy
+  return joinBase(API_BASE, url)
 }
 
 export async function postJson<TRequest, TResponse>(url: string, body: TRequest): Promise<TResponse> {
@@ -91,6 +108,7 @@ export async function postJson<TRequest, TResponse>(url: string, body: TRequest)
     return parsed.data as TResponse
   } catch (e) {
     try {
+      // Fallback to relative path in case absolute base is blocked by CORS or misconfigured
       setDiag(urlWithUser, undefined, undefined, 'POST')
       const res2 = await doFetch(urlWithUser, init)
       const parsed2 = await parseResponse<TResponse>(res2)
