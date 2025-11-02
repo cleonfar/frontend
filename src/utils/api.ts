@@ -1,5 +1,5 @@
 import { setDiag } from '@/utils/diag'
-import { getCurrentUsername } from '@/utils/auth'
+import { getCurrentToken } from '@/utils/auth'
 
 // Base API URL strategy:
 // - In production (Render), set VITE_API_BASE_URL to your deployed backend URL + '/api'
@@ -68,32 +68,24 @@ function makeFullUrl(url: string) {
 }
 
 export async function postJson<TRequest, TResponse>(url: string, body: TRequest): Promise<TResponse> {
-  // Inject user into request body when available and not already present
+  // Inject token into request body when available and not already present
   let sendBody: any = body as any
-  const username = getCurrentUsername()
-  if (username && body && typeof body === 'object' && !('user' in (body as any))) {
-    sendBody = { ...(body as any), user: username }
-  }
-  // Also append user as a query param to maximize backend compatibility
-  const appendUser = (u: string | null, raw: string) => {
-    if (!u) return raw
-    const hasQuery = raw.includes('?')
-    const sep = hasQuery ? '&' : '?'
-    return `${raw}${sep}user=${encodeURIComponent(u)}`
+  const token = getCurrentToken()
+  if (token && body && typeof body === 'object' && !('token' in (body as any))) {
+    sendBody = { ...(body as any), token }
   }
   const init: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Accept': 'application/json',
-      // Send only X-User to match backend expectation
-      ...(username ? { 'X-User': username } : {})
+      ...(token ? { 'Authorization': `Bearer ${token}`, 'X-Token': token } : {})
     },
     body: JSON.stringify(sendBody)
   }
 
-  const urlWithUser = appendUser(username, url)
-  const full = makeFullUrl(urlWithUser)
+  const urlWithAuth = url
+  const full = makeFullUrl(urlWithAuth)
 
   // Prefer direct backend first (may require CORS), then fallback to proxy-relative
   try {
@@ -109,36 +101,36 @@ export async function postJson<TRequest, TResponse>(url: string, body: TRequest)
   } catch (e) {
     try {
       // Fallback to relative path in case absolute base is blocked by CORS or misconfigured
-      setDiag(urlWithUser, undefined, undefined, 'POST')
-      const res2 = await doFetch(urlWithUser, init)
+      setDiag(urlWithAuth, undefined, undefined, 'POST')
+      const res2 = await doFetch(urlWithAuth, init)
       const parsed2 = await parseResponse<TResponse>(res2)
       if (!parsed2.ok) {
-        setDiag(urlWithUser, undefined, parsed2.error, 'POST')
+        setDiag(urlWithAuth, undefined, parsed2.error, 'POST')
         throw new Error(parsed2.error)
       }
-      setDiag(urlWithUser, parsed2.data, undefined, 'POST')
+      setDiag(urlWithAuth, parsed2.data, undefined, 'POST')
       return parsed2.data as TResponse
     } catch (e2: any) {
       const msg = e2?.message ?? (e as any)?.message ?? String(e2 ?? e)
-      setDiag(urlWithUser, undefined, msg, 'POST')
+      setDiag(urlWithAuth, undefined, msg, 'POST')
       throw new Error(msg)
     }
   }
 }
 
 export async function getJson<TResponse>(url: string): Promise<TResponse> {
-  const username = getCurrentUsername()
-  const appendUser = (u: string | null, raw: string) => {
-    if (!u) return raw
-    const hasQuery = raw.includes('?')
-    const sep = hasQuery ? '&' : '?'
-    return `${raw}${sep}user=${encodeURIComponent(u)}`
+  const token = getCurrentToken()
+  const init: RequestInit = {
+    headers: {
+      'Accept': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}`, 'X-Token': token } : {})
+    }
   }
-  const full = makeFullUrl(appendUser(username, url))
+  const full = makeFullUrl(url)
 
   try {
     setDiag(full, undefined, undefined, 'GET')
-    const res = await doFetch(full)
+    const res = await doFetch(full, init)
     const parsed = await parseResponse<TResponse>(res)
     if (!parsed.ok) {
       setDiag(full, undefined, parsed.error, 'GET')
@@ -148,9 +140,9 @@ export async function getJson<TResponse>(url: string): Promise<TResponse> {
     return parsed.data as TResponse
   } catch (e) {
     try {
-      const proxied = appendUser(username, url)
+      const proxied = url
       setDiag(proxied, undefined, undefined, 'GET')
-      const res2 = await doFetch(proxied)
+      const res2 = await doFetch(proxied, init)
       const parsed2 = await parseResponse<TResponse>(res2)
       if (!parsed2.ok) {
         setDiag(url, undefined, parsed2.error, 'GET')

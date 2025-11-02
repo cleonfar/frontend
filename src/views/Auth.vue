@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import { ref, computed, getCurrentInstance } from 'vue'
 import { postJson } from '@/utils/api'
-import { loginUser } from '@/utils/auth'
+import { loginWithToken } from '@/utils/auth'
 
 const props = defineProps<{ mode?: 'login' | 'register' }>()
 const inst = getCurrentInstance()
@@ -54,10 +54,11 @@ async function onSubmit() {
   const payload: any = { username: uname, password: p }
     const url = mode.value === 'register' ? '/api/UserAuthentification/register' : '/api/UserAuthentification/login'
     const res = await postJson<typeof payload, any>(url, payload)
-    // Expect backend to return { username }
-    const u = (res && typeof res === 'object') ? (res.username ?? (res as any).user ?? (res as any).name ?? null) : null
-    if (!u) throw new Error('Login failed: missing username in response')
-    loginUser(String(u))
+    // Expect backend to return { token, username? }
+    const token = (res && typeof res === 'object') ? (res.token ?? (res as any).sessionToken ?? (res as any).jwt ?? null) : null
+    if (!token) throw new Error('Login failed: missing session token in response')
+    const displayName = (res && typeof res === 'object') ? (res.username ?? (res as any).user ?? (res as any).name ?? null) : null
+    loginWithToken(String(token), displayName ? String(displayName) : null)
     const params = new URLSearchParams(routeQuery)
     const redirect = params.get('redirect') || '/'
     if (router && typeof router.push === 'function') router.push(redirect)
