@@ -407,7 +407,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, getCurrentInstance } from 'vue'
-import { postJson, getJson } from '@/utils/api'
+import { postJson } from '@/utils/api'
 import { formatDateMDY } from '@/utils/format'
 import { normalizeAiSummary } from '@/utils/aiSummary'
 
@@ -469,14 +469,63 @@ function getStatusFromIdentity(obj: any): 'sold' | 'deceased' | 'active' | 'unkn
   return 'unknown'
 }
 
-async function isRegistered(id: string): Promise<boolean> {
-  const animalId = (id || '').trim()
-  if (!animalId) return false
+function extractId(a: any): string | undefined {
+  if (a == null) return undefined
+  if (typeof a === 'string' || typeof a === 'number') return String(a)
+  const direct = (
+    a.AnimalID ?? a.AnimalId ?? a.animalID ?? a.animalId ?? a.animal_id ??
+    a.id ?? a.ID ?? a.Id ??
+    a.identityId ?? a.identityID ?? a.IdentityId ?? a.IdentityID ??
+    a.uid ?? a.UUID ?? a.uuid ?? a.uniqueId ?? a.uniqueID ??
+    a.animal ?? a.name ?? a.code ?? a.animalCode ?? a.identifier ?? a.tag ?? a.earTag ?? a.ear_tag ?? a.identity ??
+    a._id
+  )
+  if (direct != null) return String(direct)
+  const nestedCandidates = [a.identity, a.meta, a.info, a.Animal, a.AnimalIdentity]
+  for (const obj of nestedCandidates) {
+    if (obj && typeof obj === 'object') {
+      const nestedId = (obj.id ?? obj.ID ?? obj.Id ?? obj._id)
+      if (nestedId != null) return String(nestedId)
+    }
+  }
+  for (const [k, v] of Object.entries(a)) {
+    if (typeof v === 'string' || typeof v === 'number') {
+      if (/^(id|_id|animalid|identityid|uid|uuid)$/i.test(k)) return String(v)
+      if (/(^|[^a-z])(id|uid|uuid)([^a-z]|$)/i.test(k) && String(v).length > 0) return String(v)
+    }
+    if (v && typeof v === 'object') {
+      const vv: any = v
+      const nested = vv.id ?? vv.ID ?? vv.Id ?? vv._id
+      if (nested != null) return String(nested)
+    }
+  }
+  return undefined
+}
+
+async function findRegisteredAnimal(id: string): Promise<any | null> {
+  const target = (id || '').trim()
+  if (!target) return null
   try {
-    await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(animalId)}`)
-    return true
+    const res = await postJson<any, any>('/api/AnimalIdentity/_getAllAnimals', {})
+    let list: any[] = []
+    if (Array.isArray(res)) list = res
+    else if (res && typeof res === 'object') {
+      if (Array.isArray(res.animals)) list = res.animals
+      else if (Array.isArray(res.data)) list = res.data
+      else if (Array.isArray(res.items)) list = res.items
+      else if (res.body && typeof res.body === 'object') {
+        if (Array.isArray(res.body.animals)) list = res.body.animals
+        else if (Array.isArray(res.body.data)) list = res.body.data
+        else if (Array.isArray(res.body.items)) list = res.body.items
+      }
+    }
+    for (const a of list) {
+      const aid = extractId(a)
+      if (aid && String(aid) === target) return a
+    }
+    return null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -515,9 +564,9 @@ async function onRecordWeight() {
   if (!weightForm.value.animal || !weightForm.value.dateGenerated || weightForm.value.weight == null) return
   recording.value = true
   try {
-    // Ensure the animal is registered first
-    const exists = await isRegistered(weightForm.value.animal)
-    if (!exists) {
+    // Ensure the animal is registered first via the overview list query
+    const record = await findRegisteredAnimal(weightForm.value.animal)
+    if (!record) {
       // Show quick registration UI and prefill
       regForm.value.id = (weightForm.value.animal || '').trim()
       regNeeded.value = true
@@ -525,28 +574,25 @@ async function onRecordWeight() {
       return
     }
     // If registered, check status to see if it's sold/deceased and require confirmation
-    try {
-      const identity = await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(weightForm.value.animal.trim())}`)
-      const st = getStatusFromIdentity(identity)
-      if ((st === 'sold' || st === 'deceased') && !statusConfirmNeeded.value) {
-        const payload = {
-          animal: weightForm.value.animal.trim(),
-          dateGenerated: weightForm.value.dateGenerated,
-          date: weightForm.value.dateGenerated,
-          dateGeneratedMs: new Date(`${weightForm.value.dateGenerated}T00:00:00Z`).getTime(),
-          weight: Number(weightForm.value.weight),
-          notes: (weightForm.value.notes || '').trim()
-        }
-        pendingRecordPayload.value = payload
-        statusType.value = st
-        statusMessage.value = st === 'sold'
-          ? 'This animal is marked as sold. Do you want to proceed with recording a weight?'
-          : 'This animal is marked as deceased. Do you want to proceed with recording a weight?'
-        statusConfirmNeeded.value = true
-        recording.value = false
-        return
+    const st = getStatusFromIdentity(record)
+    if ((st === 'sold' || st === 'deceased') && !statusConfirmNeeded.value) {
+      const payload = {
+        animal: weightForm.value.animal.trim(),
+        dateGenerated: weightForm.value.dateGenerated,
+        date: weightForm.value.dateGenerated,
+        dateGeneratedMs: new Date(`${weightForm.value.dateGenerated}T00:00:00Z`).getTime(),
+        weight: Number(weightForm.value.weight),
+        notes: (weightForm.value.notes || '').trim()
       }
-    } catch { /* if identity fails here but isRegistered passed, continue */ }
+      pendingRecordPayload.value = payload
+      statusType.value = st
+      statusMessage.value = st === 'sold'
+        ? 'This animal is marked as sold. Do you want to proceed with recording a weight?'
+        : 'This animal is marked as deceased. Do you want to proceed with recording a weight?'
+      statusConfirmNeeded.value = true
+      recording.value = false
+      return
+    }
     const payload = {
       animal: weightForm.value.animal.trim(),
       dateGenerated: weightForm.value.dateGenerated,

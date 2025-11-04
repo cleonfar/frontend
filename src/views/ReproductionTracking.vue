@@ -289,7 +289,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, getCurrentInstance, computed } from 'vue'
-import { postJson, getJson } from '@/utils/api'
+import { postJson } from '@/utils/api'
 import { formatDateMDY } from '@/utils/format'
 import { normalizeAiSummary } from '@/utils/aiSummary'
 // Tabs
@@ -352,33 +352,90 @@ function getStatusFromIdentity(obj: any): 'sold' | 'deceased' | 'active' | 'unkn
   return 'unknown'
 }
 
+function extractId(a: any): string | undefined {
+  if (a == null) return undefined
+  if (typeof a === 'string' || typeof a === 'number') return String(a)
+  const direct = (
+    a.AnimalID ?? a.AnimalId ?? a.animalID ?? a.animalId ?? a.animal_id ??
+    a.id ?? a.ID ?? a.Id ??
+    a.identityId ?? a.identityID ?? a.IdentityId ?? a.IdentityID ??
+    a.uid ?? a.UUID ?? a.uuid ?? a.uniqueId ?? a.uniqueID ??
+    a.animal ?? a.name ?? a.code ?? a.animalCode ?? a.identifier ?? a.tag ?? a.earTag ?? a.ear_tag ?? a.identity ??
+    a._id
+  )
+  if (direct != null) return String(direct)
+  const nestedCandidates = [a.identity, a.meta, a.info, a.Animal, a.AnimalIdentity]
+  for (const obj of nestedCandidates) {
+    if (obj && typeof obj === 'object') {
+      const nestedId = (obj.id ?? obj.ID ?? obj.Id ?? obj._id)
+      if (nestedId != null) return String(nestedId)
+    }
+  }
+  for (const [k, v] of Object.entries(a)) {
+    if (typeof v === 'string' || typeof v === 'number') {
+      if (/^(id|_id|animalid|identityid|uid|uuid)$/i.test(k)) return String(v)
+      if (/(^|[^a-z])(id|uid|uuid)([^a-z]|$)/i.test(k) && String(v).length > 0) return String(v)
+    }
+    if (v && typeof v === 'object') {
+      const vv: any = v
+      const nested = vv.id ?? vv.ID ?? vv.Id ?? vv._id
+      if (nested != null) return String(nested)
+    }
+  }
+  return undefined
+}
+
+async function findRegisteredAnimal(id: string): Promise<any | null> {
+  const target = (id || '').trim()
+  if (!target) return null
+  try {
+    const res = await postJson<any, any>('/api/AnimalIdentity/_getAllAnimals', {})
+    let list: any[] = []
+    if (Array.isArray(res)) list = res
+    else if (res && typeof res === 'object') {
+      if (Array.isArray(res.animals)) list = res.animals
+      else if (Array.isArray(res.data)) list = res.data
+      else if (Array.isArray(res.items)) list = res.items
+      else if (res.body && typeof res.body === 'object') {
+        if (Array.isArray(res.body.animals)) list = res.body.animals
+        else if (Array.isArray(res.body.data)) list = res.body.data
+        else if (Array.isArray(res.body.items)) list = res.body.items
+      }
+    }
+    for (const a of list) {
+      const aid = extractId(a)
+      if (aid && String(aid) === target) return a
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 async function onAddMother() {
   addMotherError.value = null
   addMotherOk.value = false
   if (!addMotherForm.value.motherId) return
-  // Precheck: ensure mother is registered
+  // Precheck: ensure mother is registered using the overview list query
   const id = addMotherForm.value.motherId.trim()
-  const exists = await isRegistered(id)
-  if (!exists) {
+  const record = await findRegisteredAnimal(id)
+  if (!record) {
     // Show inline quick registration UI; do not proceed yet
     regMotherForm.value.id = id
     motherRegNeeded.value = true
     return
   }
-  // If registered, check identity status and require confirmation if sold/deceased
-  try {
-    const identity = await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(id)}`)
-    const st = getStatusFromIdentity(identity)
-    if ((st === 'sold' || st === 'deceased') && !motherStatusConfirmNeeded.value) {
-      motherPendingId.value = id
-      motherStatusType.value = st
-      motherStatusMessage.value = st === 'sold'
-        ? 'This animal is marked as sold. Do you want to proceed with adding as a mother?'
-        : 'This animal is marked as deceased. Do you want to proceed with adding as a mother?'
-      motherStatusConfirmNeeded.value = true
-      return
-    }
-  } catch { /* if identity fetch fails here, continue */ }
+  // If registered, check identity status from the list record and require confirmation if sold/deceased
+  const st = getStatusFromIdentity(record)
+  if ((st === 'sold' || st === 'deceased') && !motherStatusConfirmNeeded.value) {
+    motherPendingId.value = id
+    motherStatusType.value = st
+    motherStatusMessage.value = st === 'sold'
+      ? 'This animal is marked as sold. Do you want to proceed with adding as a mother?'
+      : 'This animal is marked as deceased. Do you want to proceed with adding as a mother?'
+    motherStatusConfirmNeeded.value = true
+    return
+  }
   addingMother.value = true
   try {
     const payload = { motherId: id }
@@ -445,16 +502,7 @@ const regMotherForm = ref<RegReq>({ id: '', species: '', sex: 'female', birthDat
 const selectedMotherSpecies = ref('')
 const customMotherSpecies = ref('')
 
-async function isRegistered(id: string): Promise<boolean> {
-  const animalId = (id || '').trim()
-  if (!animalId) return false
-  try {
-    await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(animalId)}`)
-    return true
-  } catch {
-    return false
-  }
-}
+// Removed direct isRegistered lookup; registration is validated via list query
 
 function resolveMotherSpecies(): string {
   return (selectedMotherSpecies.value === 'other' ? (customMotherSpecies.value || '') : (selectedMotherSpecies.value || '')).trim()
