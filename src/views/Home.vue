@@ -41,7 +41,7 @@
     <!-- Overview stats -->
     <div class="stats grid">
       <div class="stat card">
-        <div class="label">Registered animals</div>
+        <div class="label">Animals</div>
         <div class="value">{{ fmt(animalsCount) }}</div>
         <div v-if="animalsError" class="error small">{{ animalsError }}</div>
       </div>
@@ -164,7 +164,22 @@ async function loadAnimalsCount() {
       else if (Array.isArray(res.data)) list = res.data
       else if (Array.isArray(res.items)) list = res.items
     }
-    animalsCount.value = list.length
+    // Count only animals that are not sold or deceased
+    const getStatus = (a: any): string => {
+      const s = a?.status ?? a?.Status
+      if (s != null && String(s).trim().length) return String(s).toLowerCase()
+      // Derive from common boolean flags as a fallback
+      const sold = a?.sold ?? a?.isSold ?? a?.Sold ?? a?.IsSold
+      if (sold === true || String(sold).toLowerCase() === 'true') return 'sold'
+      const dead = a?.deceased ?? a?.isDeceased ?? a?.dead ?? a?.isDead ?? a?.Deceased ?? a?.IsDeceased
+      if (dead === true || String(dead).toLowerCase() === 'true') return 'deceased'
+      return 'active'
+    }
+    const active = list.filter(a => {
+      const st = getStatus(a)
+      return st !== 'sold' && st !== 'deceased'
+    })
+    animalsCount.value = active.length
   } catch (e: any) {
     animalsError.value = e?.message ?? String(e)
     animalsCount.value = null

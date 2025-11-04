@@ -21,6 +21,60 @@
         <div v-if="addMotherOk" class="ok">Added.</div>
       </form>
 
+      <!-- Warning confirmation if mother is sold or deceased -->
+      <div v-if="motherStatusConfirmNeeded" class="card sub mt">
+        <h4>Confirm action</h4>
+        <p class="muted">{{ motherStatusMessage }}</p>
+        <div class="row mt">
+          <button class="danger" @click="confirmProceedAddMother" :disabled="addingMother">{{ addingMother ? 'Adding…' : 'Proceed anyway' }}</button>
+          <button class="ml" @click="cancelProceedAddMother" :disabled="addingMother">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Quick registration prompt if mother is not registered -->
+      <div v-if="motherRegNeeded" class="card sub mt">
+        <h4>This mother isn’t registered</h4>
+        <p class="muted">Please provide registration details to continue.</p>
+        <div class="grid-2">
+          <label>Mother ID
+            <input v-model="regMotherForm.id" readonly />
+          </label>
+          <label>Sex
+            <select v-model="regMotherForm.sex">
+              <option value="female">female</option>
+              <option value="male">male</option>
+              <option value="neutered">neutered</option>
+            </select>
+          </label>
+          <div>
+            <label>Species
+              <select v-model="selectedMotherSpecies">
+                <option value="">Select…</option>
+                <option v-for="sp in KNOWN_SPECIES" :key="sp" :value="sp">{{ sp }}</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <div v-if="selectedMotherSpecies === 'other'">
+              <input v-model="customMotherSpecies" placeholder="Enter species" aria-label="Species" />
+            </div>
+          </div>
+          <label>Birth date
+            <input type="date" v-model="regMotherForm.birthDate" />
+          </label>
+          <label>Breed (optional)
+            <input v-model="regMotherForm.breed" placeholder="optional" />
+          </label>
+          <label>Notes
+            <input v-model="regMotherForm.notes" placeholder="optional" />
+          </label>
+        </div>
+        <div class="row mt">
+          <button @click="onQuickRegisterAndAddMother" :disabled="regMotherLoading">{{ regMotherLoading ? 'Registering…' : 'Register and add mother' }}</button>
+          <button class="ml" @click="motherRegNeeded = false" :disabled="regMotherLoading">Cancel</button>
+          <div v-if="regMotherError" class="error ml">{{ regMotherError }}</div>
+        </div>
+      </div>
+
       <h3>Mothers</h3>
       <div class="row">
         <button @click="toggleSelectMothers">{{ selectMothers ? 'Done selecting' : 'Select mothers for report' }}</button>
@@ -65,9 +119,17 @@
               <td><strong>{{ mid }}</strong></td>
               <td>
                 <button @click.stop="goMother(mid)">Manage offspring</button>
-                <button class="ml" @click.stop="removeMother(mid)" :disabled="removingMother[mid]">
-                  {{ removingMother[mid] ? 'Removing…' : 'Remove' }}
-                </button>
+                <template v-if="rowConfirmDeleteMother[mid]">
+                  <button class="ml danger" @click.stop.prevent="confirmRemoveMother(mid)" :disabled="removingMother[mid]">
+                    {{ removingMother[mid] ? 'Removing…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" @click.stop.prevent="rowConfirmDeleteMother[mid] = false" :disabled="removingMother[mid]">Cancel</button>
+                </template>
+                <template v-else>
+                  <button class="ml danger" @click.stop.prevent="rowConfirmDeleteMother[mid] = true" :disabled="removingMother[mid]">
+                    Remove
+                  </button>
+                </template>
               </td>
             </tr>
             <tr v-if="expanded[mid]">
@@ -104,6 +166,7 @@
         </tbody>
       </table>
       <div v-else-if="!mothersLoading">No mothers found.</div>
+      <div v-if="deleteMotherError" class="error mt">{{ deleteMotherError }}</div>
     </section>
 
     <!-- Reports Tab: list existing reports and open by name -->
@@ -125,9 +188,15 @@
             <tr class="clickable-row" @click="toggleReproReport(name)">
               <td>{{ name }}</td>
               <td>
-                <button class="danger" @click.stop="onDeleteReproReportName(name)" :disabled="reproRowDeleting[name]">
-                  {{ reproRowDeleting[name] ? 'Deleting…' : 'Delete' }}
-                </button>
+                <template v-if="reproRowConfirmDelete[name]">
+                  <button class="danger" @click.stop="onDeleteReproReportName(name)" :disabled="reproRowDeleting[name]">
+                    {{ reproRowDeleting[name] ? 'Deleting…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" @click.stop="reproRowConfirmDelete[name] = false" :disabled="reproRowDeleting[name]">Cancel</button>
+                </template>
+                <template v-else>
+                  <button class="danger" @click.stop="reproRowConfirmDelete[name] = true" :disabled="reproRowDeleting[name]">Delete</button>
+                </template>
               </td>
             </tr>
             <tr v-if="expandedRepro[name]">
@@ -220,7 +289,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, getCurrentInstance, computed } from 'vue'
-import { postJson } from '@/utils/api'
+import { postJson, getJson } from '@/utils/api'
 import { formatDateMDY } from '@/utils/format'
 import { normalizeAiSummary } from '@/utils/aiSummary'
 // Tabs
@@ -261,14 +330,58 @@ const addMotherForm = ref<{ motherId: string }>({ motherId: '' })
 const addingMother = ref(false)
 const addMotherError = ref<string | null>(null)
 const addMotherOk = ref(false)
+// Status confirmation for sold/deceased mothers
+const motherStatusConfirmNeeded = ref(false)
+const motherStatusType = ref<'sold' | 'deceased' | 'unknown' | null>(null)
+const motherStatusMessage = ref('')
+const motherPendingId = ref<string | null>(null)
+
+function getStatusFromIdentity(obj: any): 'sold' | 'deceased' | 'active' | 'unknown' {
+  if (!obj || typeof obj !== 'object') return 'unknown'
+  const s = (obj as any).status ?? (obj as any).Status
+  if (s != null && String(s).trim()) {
+    const v = String(s).toLowerCase()
+    if (v.includes('sold')) return 'sold'
+    if (v.includes('deceased') || v.includes('dead')) return 'deceased'
+    return 'active'
+  }
+  const sold = (obj as any).sold ?? (obj as any).isSold ?? (obj as any).Sold ?? (obj as any).IsSold
+  if (sold === true || String(sold).toLowerCase() === 'true') return 'sold'
+  const dead = (obj as any).deceased ?? (obj as any).isDeceased ?? (obj as any).dead ?? (obj as any).isDead ?? (obj as any).Deceased ?? (obj as any).IsDeceased
+  if (dead === true || String(dead).toLowerCase() === 'true') return 'deceased'
+  return 'unknown'
+}
 
 async function onAddMother() {
   addMotherError.value = null
   addMotherOk.value = false
   if (!addMotherForm.value.motherId) return
+  // Precheck: ensure mother is registered
+  const id = addMotherForm.value.motherId.trim()
+  const exists = await isRegistered(id)
+  if (!exists) {
+    // Show inline quick registration UI; do not proceed yet
+    regMotherForm.value.id = id
+    motherRegNeeded.value = true
+    return
+  }
+  // If registered, check identity status and require confirmation if sold/deceased
+  try {
+    const identity = await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(id)}`)
+    const st = getStatusFromIdentity(identity)
+    if ((st === 'sold' || st === 'deceased') && !motherStatusConfirmNeeded.value) {
+      motherPendingId.value = id
+      motherStatusType.value = st
+      motherStatusMessage.value = st === 'sold'
+        ? 'This animal is marked as sold. Do you want to proceed with adding as a mother?'
+        : 'This animal is marked as deceased. Do you want to proceed with adding as a mother?'
+      motherStatusConfirmNeeded.value = true
+      return
+    }
+  } catch { /* if identity fetch fails here, continue */ }
   addingMother.value = true
   try {
-    const payload = { motherId: addMotherForm.value.motherId.trim() }
+    const payload = { motherId: id }
     await postJson<typeof payload, any>('/api/ReproductionTracking/addMother', payload)
     addMotherOk.value = true
     // Clear input and refresh list
@@ -282,12 +395,95 @@ async function onAddMother() {
   }
 }
 
+async function confirmProceedAddMother() {
+  const id = (motherPendingId.value || '').trim()
+  if (!id) { motherStatusConfirmNeeded.value = false; return }
+  addMotherError.value = null
+  addMotherOk.value = false
+  addingMother.value = true
+  try {
+    const payload = { motherId: id }
+    await postJson<typeof payload, any>('/api/ReproductionTracking/addMother', payload)
+    addMotherOk.value = true
+    addMotherForm.value.motherId = ''
+    mothers.value = []
+    await loadMothers()
+  } catch (e: any) {
+    addMotherError.value = e?.message ?? String(e)
+  } finally {
+    addingMother.value = false
+    motherStatusConfirmNeeded.value = false
+    motherStatusType.value = null
+    motherStatusMessage.value = ''
+    motherPendingId.value = null
+  }
+}
+
+function cancelProceedAddMother() {
+  motherStatusConfirmNeeded.value = false
+  motherStatusType.value = null
+  motherStatusMessage.value = ''
+  motherPendingId.value = null
+}
+
 // Mothers listing and offspring expand
 const mothers = ref<string[]>([])
 const mothersLoading = ref(true)
 const mothersError = ref<string | null>(null)
 const expanded = ref<Record<string, boolean>>({})
 const removingMother = ref<Record<string, boolean>>({})
+const rowConfirmDeleteMother = ref<Record<string, boolean>>({})
+const deleteMotherError = ref<string | null>(null)
+// Quick registration for mothers
+type RegReq = { id: string; species: string; sex: 'male'|'female'|'neutered'; birthDate: string; breed?: string; notes?: string }
+const KNOWN_SPECIES = ['cow','sheep','goat','pig','horse','donkey','camel','buffalo','rabbit'] as const
+const motherRegNeeded = ref(false)
+const regMotherLoading = ref(false)
+const regMotherError = ref<string | null>(null)
+const todayRegStr = new Date().toISOString().slice(0,10)
+const regMotherForm = ref<RegReq>({ id: '', species: '', sex: 'female', birthDate: todayRegStr, breed: '', notes: '' })
+const selectedMotherSpecies = ref('')
+const customMotherSpecies = ref('')
+
+async function isRegistered(id: string): Promise<boolean> {
+  const animalId = (id || '').trim()
+  if (!animalId) return false
+  try {
+    await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(animalId)}`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveMotherSpecies(): string {
+  return (selectedMotherSpecies.value === 'other' ? (customMotherSpecies.value || '') : (selectedMotherSpecies.value || '')).trim()
+}
+
+async function onQuickRegisterAndAddMother() {
+  regMotherError.value = null
+  regMotherLoading.value = true
+  try {
+    const payload: RegReq = {
+      id: (regMotherForm.value.id || '').trim(),
+      species: resolveMotherSpecies(),
+      sex: regMotherForm.value.sex,
+      birthDate: (regMotherForm.value.birthDate || '').trim(),
+      breed: (regMotherForm.value.breed || '').trim(),
+      notes: (regMotherForm.value.notes || '').trim()
+    }
+    if (!payload.id) throw new Error('Missing mother ID')
+    if (!payload.species) throw new Error('Please select a species or enter a custom species')
+    await postJson<RegReq, any>('/api/AnimalIdentity/registerAnimal', payload)
+    motherRegNeeded.value = false
+    // After registration, proceed to add mother
+    await onAddMother()
+  } catch (e: any) {
+    regMotherError.value = e?.message ?? String(e)
+  } finally {
+    regMotherLoading.value = false
+  }
+}
 // Grouped view: litters per mother and offspring per litter
 type Litter = { litterId: string; notes?: string; internalLitterId?: string; [k: string]: any }
 const littersByMother = ref<Record<string, Litter[]>>({})
@@ -459,23 +655,32 @@ function toggleMother(motherId: string) {
 
 // read-only: no add offspring from overview
 
-async function removeMother(motherId: string) {
-  const ok = confirm(`Remove mother ${motherId}?`)
-  if (!ok) return
-  removingMother.value[motherId] = true
+async function onRemoveMother(motherId: string) {
+  deleteMotherError.value = null
+  const id = String(motherId || '').trim()
+  if (!id) return
+  removingMother.value[id] = true
   try {
-    await postJson('/api/ReproductionTracking/removeMother', { motherId })
-    mothers.value = mothers.value.filter(m => m !== motherId)
+    await postJson('/api/ReproductionTracking/removeMother', { motherId: id })
+    // Remove locally
+    mothers.value = mothers.value.filter(m => m !== id)
     // cleanup expanded/litter state
-    delete expanded.value[motherId]
-    delete littersByMother.value[motherId]
-    delete littersLoading.value[motherId]
-    delete littersError.value[motherId]
+    delete expanded.value[id]
+    delete littersByMother.value[id]
+    delete littersLoading.value[id]
+    delete littersError.value[id]
+    rowConfirmDeleteMother.value[id] = false
+    // Refresh from server to ensure consistency
+    await loadMothers()
   } catch (e: any) {
-    mothersError.value = e?.message ?? String(e)
+    deleteMotherError.value = e?.message ?? String(e)
   } finally {
-    removingMother.value[motherId] = false
+    removingMother.value[id] = false
   }
+}
+
+function confirmRemoveMother(id: string) {
+  onRemoveMother(id)
 }
 
 async function loadLitters(motherId: string, attempt = 0) {
@@ -589,6 +794,7 @@ const reproReportNames = ref<string[]>([])
 const reproNamesLoading = ref(false)
 const reproNamesError = ref<string | null>(null)
 const reproRowDeleting = ref<Record<string, boolean>>({})
+const reproRowConfirmDelete = ref<Record<string, boolean>>({})
 const reproDeleteListError = ref<string | null>(null)
 // Optional per-row dropdown state to support closing on navigation
 const reproRowMenuOpen = ref<Record<string, boolean>>({})
@@ -839,14 +1045,13 @@ async function onDeleteReproReportName(name: string) {
   reproDeleteListError.value = null
   const reportName = String(name || '').trim()
   if (!reportName) return
-  const ok = confirm(`Delete report "${reportName}"? This cannot be undone.`)
-  if (!ok) return
   reproRowDeleting.value[reportName] = true
   try {
     const payload = { reportName }
     await postJson<typeof payload, any>('/api/ReproductionTracking/deleteReport', payload)
     reproReportNames.value = reproReportNames.value.filter(n => n !== reportName)
     if (!reproReportNames.value.length) await loadReproReportNames()
+    reproRowConfirmDelete.value[reportName] = false
   } catch (e: any) {
     reproDeleteListError.value = e?.message ?? String(e)
   } finally {

@@ -32,14 +32,22 @@
             <td class="actions-cell">
               <button @click.stop="openMarkSold(a.id)" :disabled="busyIds[a.id] || markSoldOpen[a.id]">{{ markSoldOpen[a.id] ? 'Add notes…' : (busyIds[a.id] ? 'Marking…' : 'Mark sold') }}</button>
               <button @click.stop="openMarkDead(a.id)" :disabled="busyIds[a.id] || markDeadOpen[a.id]">{{ markDeadOpen[a.id] ? 'Add cause…' : (busyIds[a.id] ? 'Marking…' : 'Mark dead') }}</button>
-              <button
-                class="danger"
-                :disabled="removingIds[a.id]"
-                :title="!a.id ? 'Missing ID on this record' : ''"
-                @click.prevent.stop="onRemove(a.id)"
-              >
-                {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
-              </button>
+              <template v-if="rowConfirmDelete[a.id]">
+                <button class="danger" :disabled="removingIds[a.id]" @click.prevent.stop="confirmRemove(a.id)">
+                  {{ removingIds[a.id] ? 'Removing…' : 'Confirm' }}
+                </button>
+                <button class="ml" :disabled="removingIds[a.id]" @click.prevent.stop="rowConfirmDelete[a.id] = false">Cancel</button>
+              </template>
+              <template v-else>
+                <button
+                  class="danger"
+                  :disabled="removingIds[a.id]"
+                  :title="!a.id ? 'Missing ID on this record' : ''"
+                  @click.prevent.stop="rowConfirmDelete[a.id] = true"
+                >
+                  Delete
+                </button>
+              </template>
             </td>
           </tr>
           <!-- Slide-down cause of death panel for Mark dead -->
@@ -117,14 +125,22 @@
               <td>{{ formatDate(a.birthDate) }}</td>
               <td>{{ a.breed ?? '-' }}</td>
               <td class="actions-cell">
-                <button
-                  class="danger"
-                  :disabled="removingIds[a.id]"
-                  :title="!a.id ? 'Missing ID on this record' : ''"
-                  @click.prevent.stop="onRemove(a.id)"
-                >
-                  {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
-                </button>
+                <template v-if="rowConfirmDelete[a.id]">
+                  <button class="danger" :disabled="removingIds[a.id]" @click.prevent.stop="confirmRemove(a.id)">
+                    {{ removingIds[a.id] ? 'Removing…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" :disabled="removingIds[a.id]" @click.prevent.stop="rowConfirmDelete[a.id] = false">Cancel</button>
+                </template>
+                <template v-else>
+                  <button
+                    class="danger"
+                    :disabled="removingIds[a.id]"
+                    :title="!a.id ? 'Missing ID on this record' : ''"
+                    @click.prevent.stop="rowConfirmDelete[a.id] = true"
+                  >
+                    Delete
+                  </button>
+                </template>
               </td>
             </tr>
             <tr v-if="detailsMap[a.id]">
@@ -167,14 +183,22 @@
               <td>{{ formatDate(a.birthDate) }}</td>
               <td>{{ a.breed ?? '-' }}</td>
               <td class="actions-cell">
-                <button
-                  class="danger"
-                  :disabled="removingIds[a.id]"
-                  :title="!a.id ? 'Missing ID on this record' : ''"
-                  @click.prevent.stop="onRemove(a.id)"
-                >
-                  {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
-                </button>
+                <template v-if="rowConfirmDelete[a.id]">
+                  <button class="danger" :disabled="removingIds[a.id]" @click.prevent.stop="confirmRemove(a.id)">
+                    {{ removingIds[a.id] ? 'Removing…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" :disabled="removingIds[a.id]" @click.prevent.stop="rowConfirmDelete[a.id] = false">Cancel</button>
+                </template>
+                <template v-else>
+                  <button
+                    class="danger"
+                    :disabled="removingIds[a.id]"
+                    :title="!a.id ? 'Missing ID on this record' : ''"
+                    @click.prevent.stop="rowConfirmDelete[a.id] = true"
+                  >
+                    Delete
+                  </button>
+                </template>
               </td>
             </tr>
             <tr v-if="detailsMap[a.id]">
@@ -209,6 +233,7 @@ const markSoldOpen = ref<Record<string, boolean>>({})
 const buyerNotes = ref<Record<string, string>>({})
 const markDeadOpen = ref<Record<string, boolean>>({})
 const deathCause = ref<Record<string, string>>({})
+const rowConfirmDelete = ref<Record<string, boolean>>({})
 
 const showSold = ref(false)
 const showDead = ref(false)
@@ -339,8 +364,6 @@ async function onRemove(id: string) {
     alert('Cannot remove: record has no ID.')
     return
   }
-  const confirmed = window.confirm(`Remove animal '${id}'? This cannot be undone.`)
-  if (!confirmed) return
   removingIds.value[id] = true
   error.value = null
   try {
@@ -356,11 +379,14 @@ async function onRemove(id: string) {
     // clean up details/removing flags
     delete detailsMap.value[id]
     delete removingIds.value[id]
+    rowConfirmDelete.value[id] = false
   } catch (e: any) {
     removingIds.value[id] = false
     error.value = e?.message ?? String(e)
   }
 }
+
+function confirmRemove(id: string) { onRemove(id) }
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10)

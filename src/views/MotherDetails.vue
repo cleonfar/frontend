@@ -51,7 +51,13 @@
               <span class="status-pill" :class="statusClass(o)">{{ statusText(o) }}</span>
               <span v-if="o.notes" class="muted"> ({{ o.notes }})</span>
               <button class="ml small" @click="quickWean(o)" :disabled="acting[o.offspringId]">{{ acting[o.offspringId] ? 'Weaning…' : 'Wean' }}</button>
-              <button class="ml small danger" @click="quickDeath(o)" :disabled="acting[o.offspringId]">{{ acting[o.offspringId] ? 'Marking…' : 'Mark dead' }}</button>
+              <template v-if="rowConfirmDeath[o.offspringId]">
+                <button class="ml small danger" @click="confirmQuickDeath(o)" :disabled="acting[o.offspringId]">{{ acting[o.offspringId] ? 'Marking…' : 'Confirm' }}</button>
+                <button class="ml small" @click="rowConfirmDeath[o.offspringId] = false" :disabled="acting[o.offspringId]">Cancel</button>
+              </template>
+              <template v-else>
+                <button class="ml small danger" @click="rowConfirmDeath[o.offspringId] = true" :disabled="acting[o.offspringId]">Mark dead</button>
+              </template>
             </li>
           </ul>
           <div v-else-if="offspringByLitterLoading[lit.litterId]" class="muted">Loading…</div>
@@ -120,6 +126,7 @@ const offspringByLitter = ref<Record<string, Offspring[]>>({})
 const offspringByLitterLoading = ref<Record<string, boolean>>({})
 const offspringByLitterError = ref<Record<string, string | undefined>>({})
 const acting = ref<Record<string, boolean>>({})
+const rowConfirmDeath = ref<Record<string, boolean>>({})
 const bulkWeanBusy = ref<Record<string, boolean>>({})
 const bulkWeanErr = ref<Record<string, string | undefined>>({})
 const bulkWeanResults = ref<Record<string, string[]>>({})
@@ -189,6 +196,45 @@ function extractArray(obj: any, preferredKeys: string[]): any[] {
     }
   }
   return []
+}
+
+function extractError(obj: any): string | null {
+  const seen = new Set<any>()
+  function walk(node: any, depth = 0): string | null {
+    if (node == null || depth > 4 || seen.has(node)) return null
+    seen.add(node)
+    const v = tryParseJSON(node)
+    if (typeof v === 'string') {
+      const s = v.trim()
+      // Try to extract error from common string formats like `{ error: "msg" }` or `error: "msg"`
+      const m = /(error|Error|message|Message)\s*:\s*["']([^"']+)["']/.exec(s)
+      if (m && m[2]) return m[2]
+      // If it looks like a single-line error text, surface it
+      if (/\berror\b/i.test(s) && s.length < 500) return s
+      return null
+    }
+    if (v && typeof v === 'object') {
+      const rawErr = (v as any).error ?? (v as any).Error ?? (v as any).message ?? (v as any).Message
+      if (rawErr != null && rawErr !== false) {
+        const asStr = typeof rawErr === 'string' ? rawErr : String(rawErr)
+        const cleaned = asStr.startsWith('Symbol(') && asStr.endsWith(')') ? asStr.slice(7, -1) : asStr
+        if (cleaned.trim()) return cleaned.trim()
+      }
+      const keys = ['body','Body','payload','result','content','data','Data','response','Response']
+      for (const k of keys) {
+        if (k in (v as any)) {
+          const found = walk((v as any)[k], depth + 1)
+          if (found) return found
+        }
+      }
+      for (const child of Object.values(v)) {
+        const found = walk(child, depth + 1)
+        if (found) return found
+      }
+    }
+    return null
+  }
+  return walk(obj, 0)
 }
 
 function normalizeLitter(l: any): Litter | null {
@@ -295,7 +341,9 @@ async function onAddLitter() {
       fatherId: (addLitter.value.fatherId || '').trim() || undefined,
       notes: (addLitter.value.notes || '').trim(),
     }
-    await postJson<typeof p, any>('/api/ReproductionTracking/recordLitter', p)
+    const res = await postJson<typeof p, any>('/api/ReproductionTracking/recordLitter', p)
+    const err = extractError(res)
+    if (err) throw new Error(err)
     addLitterOk.value = true
     await loadLitters()
   } catch (e: any) {
@@ -320,9 +368,22 @@ async function onAddOffspringForLitter(lit: Litter) {
       notes: (form.notes || '').trim(),
       motherId: motherId.value
     }
-    await postJson<typeof payload, any>('/api/ReproductionTracking/recordOffspring', payload)
+    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/recordOffspring', payload)
+    const err = extractError(res)
+    if (err) throw new Error(err)
+    // Verify the addition by reloading and checking presence, retry a few times for ack-style flows
+    let found = false
+    const targetId = payload.offspringId
+    for (let attempt = 0; attempt < 3 && !found; attempt++) {
+      await loadOffspringByLitter(String(sendLitterId), id)
+      const list = offspringByLitter.value[id] || []
+      found = list.some(o => String(o.offspringId) === String(targetId))
+      if (!found) await sleep(nextDelay(attempt))
+    }
+    if (!found) {
+      throw new Error('The server did not confirm the new offspring was added. It may already exist or have been rejected.')
+    }
     addOkByLitter.value[id] = true
-    await loadOffspringByLitter(String(sendLitterId), id)
     addByLitter.value[id].offspringId = ''
   } catch (e: any) {
     addErrByLitter.value[id] = e?.message ?? String(e)
@@ -380,16 +441,15 @@ async function quickWean(o: Offspring) {
     acting.value[o.offspringId] = false
   }
 }
-async function quickDeath(o: Offspring) {
+async function confirmQuickDeath(o: Offspring) {
   if (!o.offspringId) return
-  const ok = confirm(`Mark ${o.offspringId} as dead?`)
-  if (!ok) return
   acting.value[o.offspringId] = true
   try {
     const today = new Date().toISOString().slice(0,10)
     const p: any = { offspringId: o.offspringId, date: today, deathDate: today, notes: 'Recorded via manage view' }
     await postJson<typeof p, any>('/api/ReproductionTracking/recordDeath', p)
     await loadOffspringByLitter(String(o.litterId))
+    rowConfirmDeath.value[o.offspringId] = false
   } catch (e: any) {
     alert(e?.message ?? String(e))
   } finally {

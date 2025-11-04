@@ -245,6 +245,59 @@
         <div v-if="recordError" class="error">{{ recordError }}</div>
         <div v-if="recordOk" class="ok">Recorded.</div>
       </form>
+      <!-- Quick registration prompt when animal doesn't exist -->
+      <div v-if="regNeeded" class="card sub mt">
+        <h4>This animal isn’t registered</h4>
+        <p class="muted">Please provide the required registration details to continue.</p>
+        <div class="grid-2">
+          <label>Animal ID
+            <input v-model="regForm.id" readonly />
+          </label>
+          <label>Sex
+            <select v-model="regForm.sex">
+              <option value="male">male</option>
+              <option value="female">female</option>
+              <option value="neutered">neutered</option>
+            </select>
+          </label>
+          <div>
+            <label>Species
+              <select v-model="selectedSpecies">
+                <option value="">Select…</option>
+                <option v-for="sp in KNOWN_SPECIES" :key="sp" :value="sp">{{ sp }}</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <div v-if="selectedSpecies === 'other'">
+              <input v-model="customSpecies" placeholder="Enter species" aria-label="Species" />
+            </div>
+          </div>
+          <label>Birth date
+            <input type="date" v-model="regForm.birthDate" />
+          </label>
+          <label>Breed (optional)
+            <input v-model="regForm.breed" placeholder="optional" />
+          </label>
+          <label>Notes
+            <input v-model="regForm.notes" placeholder="optional" />
+          </label>
+        </div>
+        <div class="row mt">
+          <button @click="onQuickRegisterAndRecord" :disabled="regLoading">{{ regLoading ? 'Registering…' : 'Register and record' }}</button>
+          <button class="ml" @click="regNeeded = false" :disabled="regLoading">Cancel</button>
+          <div v-if="regError" class="error ml">{{ regError }}</div>
+        </div>
+      </div>
+
+      <!-- Warning confirmation if animal is sold or deceased -->
+      <div v-if="statusConfirmNeeded" class="card sub mt">
+        <h4>Confirm action</h4>
+        <p class="muted">{{ statusMessage }}</p>
+        <div class="row mt">
+          <button class="danger" @click="confirmProceedRecord" :disabled="recording">{{ recording ? 'Recording…' : 'Proceed anyway' }}</button>
+          <button class="ml" @click="cancelProceedRecord" :disabled="recording">Cancel</button>
+        </div>
+      </div>
     </section>
 
     
@@ -354,7 +407,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, getCurrentInstance } from 'vue'
-import { postJson } from '@/utils/api'
+import { postJson, getJson } from '@/utils/api'
 import { formatDateMDY } from '@/utils/format'
 import { normalizeAiSummary } from '@/utils/aiSummary'
 
@@ -383,6 +436,78 @@ const weightForm = ref<{ animal: string; dateGenerated: string; weight: number |
 const recording = ref(false)
 const recordError = ref<string | null>(null)
 const recordOk = ref(false)
+// Quick registration state for unregistered animals
+type RegReq = { id: string; species: string; sex: 'male'|'female'|'neutered'; birthDate: string; breed?: string; notes?: string }
+const KNOWN_SPECIES = ['cow','sheep','goat','pig','horse','donkey','camel','buffalo','rabbit'] as const
+const regNeeded = ref(false)
+const regLoading = ref(false)
+const regError = ref<string | null>(null)
+const todayStr = new Date().toISOString().slice(0,10)
+const regForm = ref<RegReq>({ id: '', species: '', sex: 'male', birthDate: todayStr, breed: '', notes: '' })
+const selectedSpecies = ref('')
+const customSpecies = ref('')
+
+// Status confirmation for sold/deceased animals before recording
+const statusConfirmNeeded = ref(false)
+const statusType = ref<'sold' | 'deceased' | 'unknown' | null>(null)
+const statusMessage = ref('')
+const pendingRecordPayload = ref<any | null>(null)
+
+function getStatusFromIdentity(obj: any): 'sold' | 'deceased' | 'active' | 'unknown' {
+  if (!obj || typeof obj !== 'object') return 'unknown'
+  const s = obj.status ?? obj.Status
+  if (s != null && String(s).trim()) {
+    const v = String(s).toLowerCase()
+    if (v.includes('sold')) return 'sold'
+    if (v.includes('deceased') || v.includes('dead')) return 'deceased'
+    return 'active'
+  }
+  const sold = obj.sold ?? obj.isSold ?? obj.Sold ?? obj.IsSold
+  if (sold === true || String(sold).toLowerCase() === 'true') return 'sold'
+  const dead = obj.deceased ?? obj.isDeceased ?? obj.dead ?? obj.isDead ?? obj.Deceased ?? obj.IsDeceased
+  if (dead === true || String(dead).toLowerCase() === 'true') return 'deceased'
+  return 'unknown'
+}
+
+async function isRegistered(id: string): Promise<boolean> {
+  const animalId = (id || '').trim()
+  if (!animalId) return false
+  try {
+    await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(animalId)}`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveSpecies(): string {
+  return (selectedSpecies.value === 'other' ? (customSpecies.value || '') : (selectedSpecies.value || '')).trim()
+}
+
+async function onQuickRegisterAndRecord() {
+  regError.value = null
+  regLoading.value = true
+  try {
+    const payload: RegReq = {
+      id: (regForm.value.id || '').trim(),
+      species: resolveSpecies(),
+      sex: regForm.value.sex,
+      birthDate: (regForm.value.birthDate || '').trim(),
+      breed: (regForm.value.breed || '').trim(),
+      notes: (regForm.value.notes || '').trim()
+    }
+    if (!payload.id) throw new Error('Missing animal ID')
+    if (!payload.species) throw new Error('Please select a species or enter a custom species')
+    await postJson<RegReq, any>('/api/AnimalIdentity/registerAnimal', payload)
+    regNeeded.value = false
+    // After successful registration, try recording again
+    await onRecordWeight()
+  } catch (e: any) {
+    regError.value = e?.message ?? String(e)
+  } finally {
+    regLoading.value = false
+  }
+}
 
 async function onRecordWeight() {
   recordError.value = null
@@ -390,6 +515,38 @@ async function onRecordWeight() {
   if (!weightForm.value.animal || !weightForm.value.dateGenerated || weightForm.value.weight == null) return
   recording.value = true
   try {
+    // Ensure the animal is registered first
+    const exists = await isRegistered(weightForm.value.animal)
+    if (!exists) {
+      // Show quick registration UI and prefill
+      regForm.value.id = (weightForm.value.animal || '').trim()
+      regNeeded.value = true
+      recording.value = false
+      return
+    }
+    // If registered, check status to see if it's sold/deceased and require confirmation
+    try {
+      const identity = await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(weightForm.value.animal.trim())}`)
+      const st = getStatusFromIdentity(identity)
+      if ((st === 'sold' || st === 'deceased') && !statusConfirmNeeded.value) {
+        const payload = {
+          animal: weightForm.value.animal.trim(),
+          dateGenerated: weightForm.value.dateGenerated,
+          date: weightForm.value.dateGenerated,
+          dateGeneratedMs: new Date(`${weightForm.value.dateGenerated}T00:00:00Z`).getTime(),
+          weight: Number(weightForm.value.weight),
+          notes: (weightForm.value.notes || '').trim()
+        }
+        pendingRecordPayload.value = payload
+        statusType.value = st
+        statusMessage.value = st === 'sold'
+          ? 'This animal is marked as sold. Do you want to proceed with recording a weight?'
+          : 'This animal is marked as deceased. Do you want to proceed with recording a weight?'
+        statusConfirmNeeded.value = true
+        recording.value = false
+        return
+      }
+    } catch { /* if identity fails here but isRegistered passed, continue */ }
     const payload = {
       animal: weightForm.value.animal.trim(),
       dateGenerated: weightForm.value.dateGenerated,
@@ -410,6 +567,33 @@ async function onRecordWeight() {
   } finally {
     recording.value = false
   }
+}
+
+async function confirmProceedRecord() {
+  if (!pendingRecordPayload.value) { statusConfirmNeeded.value = false; return }
+  recordError.value = null
+  recordOk.value = false
+  recording.value = true
+  try {
+    await postJson<any, any>('/api/GrowthTracking/recordWeight', pendingRecordPayload.value)
+    recordOk.value = true
+    weightForm.value.weight = null
+  } catch (e: any) {
+    recordError.value = e?.message ?? String(e)
+  } finally {
+    recording.value = false
+    statusConfirmNeeded.value = false
+    statusType.value = null
+    statusMessage.value = ''
+    pendingRecordPayload.value = null
+  }
+}
+
+function cancelProceedRecord() {
+  statusConfirmNeeded.value = false
+  statusType.value = null
+  statusMessage.value = ''
+  pendingRecordPayload.value = null
 }
 
 // Generate report state

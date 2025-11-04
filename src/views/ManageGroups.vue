@@ -71,7 +71,15 @@
                 <button @click="toggleMembers(h.name)">{{ membersExpanded[h.name] ? 'Hide members' : 'Members' }}</button>
                 <button @click="toggleManage(h.name)">{{ managing[h.name] ? 'Hide' : 'Add/Remove animal' }}</button>
                 <button @click="openSplitFor(h.name)">Split</button>
-                <button class="danger" @click="onDeleteHerd(h.name, false)">Delete</button>
+                <template v-if="rowConfirmDeleteHerd[h.name]">
+                  <button class="danger" @click="onDeleteHerd(h.name, false)" :disabled="busy[h.name]">
+                    {{ busy[h.name] ? 'Deleting…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" @click="rowConfirmDeleteHerd[h.name] = false" :disabled="busy[h.name]">Cancel</button>
+                </template>
+                <template v-else>
+                  <button class="danger" @click="rowConfirmDeleteHerd[h.name] = true" :disabled="busy[h.name]">Delete</button>
+                </template>
               </td>
             </tr>
             <tr v-if="membersExpanded[h.name]">
@@ -132,8 +140,24 @@
                 <td class="actions-cell">
                   <button @click="toggleMembers(h.name)">{{ membersExpanded[h.name] ? 'Hide members' : 'Members' }}</button>
                   <!-- Managing animals in archived herds is hidden by default to avoid accidental edits -->
-                  <button :disabled="busy[h.name]" @click="onRestoreHerd(h.name)">Restore</button>
-                  <button class="danger" @click="onDeleteHerd(h.name, true)">Delete</button>
+                  <template v-if="rowConfirmRestoreHerd[h.name]">
+                    <button @click="onRestoreHerd(h.name)" :disabled="busy[h.name]">
+                      {{ busy[h.name] ? 'Restoring…' : 'Confirm restore' }}
+                    </button>
+                    <button class="ml" @click="rowConfirmRestoreHerd[h.name] = false" :disabled="busy[h.name]">Cancel</button>
+                  </template>
+                  <template v-else>
+                    <button :disabled="busy[h.name]" @click="rowConfirmRestoreHerd[h.name] = true">Restore</button>
+                  </template>
+                  <template v-if="rowConfirmDeleteHerd[h.name]">
+                    <button class="danger" @click="onDeleteHerd(h.name, true)" :disabled="busy[h.name]">
+                      {{ busy[h.name] ? 'Deleting…' : 'Confirm' }}
+                    </button>
+                    <button class="ml" @click="rowConfirmDeleteHerd[h.name] = false" :disabled="busy[h.name]">Cancel</button>
+                  </template>
+                  <template v-else>
+                    <button class="danger" @click="rowConfirmDeleteHerd[h.name] = true" :disabled="busy[h.name]">Delete</button>
+                  </template>
                 </td>
               </tr>
               <tr v-if="membersExpanded[h.name]">
@@ -193,6 +217,8 @@ const membersFetched = ref<Record<string, boolean>>({})
 const busy = ref<Record<string, boolean>>({})
 const addAnimalInputs = ref<Record<string, string>>({})
 const removeAnimalInputs = ref<Record<string, string>>({})
+const rowConfirmDeleteHerd = ref<Record<string, boolean>>({})
+const rowConfirmRestoreHerd = ref<Record<string, boolean>>({})
 // Collapsible state for Create new group box
 const createBoxOpen = ref(true)
 const CREATE_BOX_KEY = 'groups.createBoxOpen'
@@ -461,8 +487,6 @@ async function onCreateHerd() {
 }
 
 async function onDeleteHerd(name: string, isArchived: boolean) {
-  const ok = confirm(`Delete herd "${name}"? This cannot be undone.`)
-  if (!ok) return
   busy.value[name] = true
   error.value = null
   try {
@@ -484,6 +508,7 @@ async function onDeleteHerd(name: string, isArchived: boolean) {
     delete busy.value[name]
     delete addAnimalInputs.value[name]
     delete removeAnimalInputs.value[name]
+    rowConfirmDeleteHerd.value[name] = false
   } catch (e: any) {
     error.value = e?.message ?? String(e)
   } finally {
@@ -581,8 +606,6 @@ async function onMergeHerds() {
 
 
 async function onRestoreHerd(name: string) {
-  const ok = confirm(`Restore herd "${name}" from archived?`)
-  if (!ok) return
   busy.value[name] = true
   error.value = null
   try {
@@ -600,6 +623,7 @@ async function onRestoreHerd(name: string) {
     delete membersFetched.value[name]
     delete addAnimalInputs.value[name]
     delete removeAnimalInputs.value[name]
+    rowConfirmRestoreHerd.value[name] = false
   } catch (e: any) {
     error.value = e?.message ?? String(e)
   } finally {
