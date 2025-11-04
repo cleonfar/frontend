@@ -157,3 +157,59 @@ export async function getJson<TResponse>(url: string): Promise<TResponse> {
     }
   }
 }
+
+// Variant that returns response metadata (headers, status) alongside parsed data.
+// Useful for auth where tokens may arrive in headers (e.g., Authorization, X-Token).
+export async function postJsonWithMeta<TRequest, TResponse>(url: string, body: TRequest): Promise<{ data: TResponse; headers: Record<string, string>; status: number }> {
+  let sendBody: any = body as any
+  const token = getCurrentToken()
+  if (token && body && typeof body === 'object' && !('token' in (body as any))) {
+    sendBody = { ...(body as any), token }
+  }
+  const init: RequestInit = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Accept': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}`, 'X-Token': token } : {})
+    },
+    body: JSON.stringify(sendBody)
+  }
+
+  const urlWithAuth = url
+  const full = makeFullUrl(urlWithAuth)
+
+  const headersToObject = (h: Headers): Record<string, string> => {
+    const out: Record<string, string> = {}
+    h.forEach((v, k) => { out[k] = v })
+    return out
+  }
+
+  try {
+    setDiag(full, undefined, undefined, 'POST')
+    const res = await doFetch(full, init)
+    const parsed = await parseResponse<TResponse>(res)
+    if (!parsed.ok) {
+      setDiag(full, undefined, parsed.error, 'POST')
+      throw new Error(parsed.error)
+    }
+    setDiag(full, parsed.data, undefined, 'POST')
+    return { data: parsed.data as TResponse, headers: headersToObject(res.headers), status: res.status }
+  } catch (e) {
+    try {
+      setDiag(urlWithAuth, undefined, undefined, 'POST')
+      const res2 = await doFetch(urlWithAuth, init)
+      const parsed2 = await parseResponse<TResponse>(res2)
+      if (!parsed2.ok) {
+        setDiag(urlWithAuth, undefined, parsed2.error, 'POST')
+        throw new Error(parsed2.error)
+      }
+      setDiag(urlWithAuth, parsed2.data, undefined, 'POST')
+      return { data: parsed2.data as TResponse, headers: headersToObject(res2.headers), status: res2.status }
+    } catch (e2: any) {
+      const msg = e2?.message ?? (e as any)?.message ?? String(e2 ?? e)
+      setDiag(urlWithAuth, undefined, msg, 'POST')
+      throw new Error(msg)
+    }
+  }
+}

@@ -25,7 +25,7 @@
 
 <script setup lang="ts">
 import { ref, computed, getCurrentInstance } from 'vue'
-import { postJson } from '@/utils/api'
+import { postJsonWithMeta } from '@/utils/api'
 import { loginWithToken } from '@/utils/auth'
 
 const props = defineProps<{ mode?: 'login' | 'register' }>()
@@ -53,11 +53,67 @@ async function onSubmit() {
   }
   const payload: any = { username: uname, password: p }
   const url = mode.value === 'register' ? '/api/UserAuthentication/register' : '/api/UserAuthentication/login'
-    const res = await postJson<typeof payload, any>(url, payload)
-    // Expect backend to return { token, username? }
-  const token = (res && typeof res === 'object') ? (res.token ?? (res as any).sessionToken ?? (res as any).jwt ?? null) : null
+  const { data: res, headers } = await postJsonWithMeta<typeof payload, any>(url, payload)
+    // Robust token extraction: support envelopes and stringified responses
+    const tryParseJSON = (v: any) => {
+      if (typeof v === 'string') { try { return JSON.parse(v) } catch { return v } }
+      return v
+    }
+    const unwrap = (obj: any) => {
+      let cur = tryParseJSON(obj)
+      let prev: any
+      const keys = ['body','Body','payload','result','content','data','Data','response','Response']
+      while (cur && typeof cur === 'object' && keys.some(k => k in cur) && cur !== prev) {
+        prev = cur
+        const next = (cur as any).body ?? (cur as any).Body ?? (cur as any).payload ?? (cur as any).result ?? (cur as any).content ?? (cur as any).data ?? (cur as any).Data ?? (cur as any).response ?? (cur as any).Response
+        cur = tryParseJSON(next)
+      }
+      return cur
+    }
+    const fromAny = (obj: any): { token: string | null; username: string | null } => {
+      const o = tryParseJSON(unwrap(obj))
+      // If it's a bare string and looks like a token, accept it
+      if (typeof o === 'string') {
+        const s = o.trim()
+        const looksJwt = s.split('.').length >= 3 && s.length > 20
+        return { token: looksJwt ? s : s || null, username: null }
+      }
+      if (o && typeof o === 'object') {
+        const token = (o as any).token ?? (o as any).Token ?? (o as any).sessionToken ?? (o as any).jwt ?? (o as any).access_token ?? null
+        const username = (o as any).username ?? (o as any).user ?? (o as any).name ?? null
+        if (token) return { token: String(token), username: username != null ? String(username) : null }
+        // scan shallowly for a nested token
+        for (const v of Object.values(o)) {
+          if (v && typeof v === 'object') {
+            const t = (v as any).token ?? (v as any).sessionToken ?? (v as any).jwt ?? (v as any).access_token
+            const u = (v as any).username ?? (v as any).user ?? (v as any).name
+            if (t) return { token: String(t), username: u != null ? String(u) : null }
+          } else if (typeof v === 'string') {
+            const vv = v.trim()
+            const looksJwt = vv.split('.').length >= 3 && vv.length > 20
+            if (looksJwt) return { token: vv, username: null }
+          }
+        }
+      }
+      return { token: null, username: null }
+    }
+
+    let { token, username: nameFromResp } = fromAny(res)
+    // If token is not in body, try common auth headers (requires server to expose them via CORS)
+    if (!token && headers) {
+      const h: Record<string, string> = {}
+      Object.keys(headers).forEach(k => { h[k.toLowerCase()] = headers[k] })
+      const auth = h['authorization'] || h['auth']
+      const xToken = h['x-token'] || h['x-auth-token'] || h['access-token'] || h['x-access-token']
+      let headerToken: string | null = null
+      if (auth) {
+        const m = /^Bearer\s+(.+)$/i.exec(auth)
+        headerToken = m ? m[1] : auth
+      }
+      token = (headerToken || xToken || null) as any
+    }
     if (!token) throw new Error('Login failed: missing session token in response')
-  let displayName = (res && typeof res === 'object') ? (res.username ?? (res as any).user ?? (res as any).name ?? null) : null
+    let displayName = nameFromResp
   if (!displayName) displayName = uname // fallback to entered username for header display
   loginWithToken(String(token), displayName ? String(displayName) : null)
     const params = new URLSearchParams(routeQuery)
