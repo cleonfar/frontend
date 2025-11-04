@@ -187,7 +187,7 @@
       <div v-if="reportObj || reportText" class="report-box mt">
         <h3>Report</h3>
         <div class="row mt">
-          <button @click="onLoadSummary" :disabled="summaryLoading || !lookup.reportName">{{ summaryLoading ? 'Summarizing…' : 'AI summary' }}</button>
+          <button @click="() => onLoadSummary()" :disabled="summaryLoading || !lookup.reportName">{{ summaryLoading ? 'Summarizing…' : 'AI summary' }}</button>
           <div v-if="summaryError" class="error ml">{{ summaryError }}</div>
         </div>
         <template v-if="performanceRowsMain.length">
@@ -235,6 +235,22 @@ const formatDate = formatDateMDY
 function formatAdg(v: any) {
   const n = Number(v)
   return isFinite(n) ? n.toFixed(3) : '-'
+}
+
+// Async ack handling: some endpoints first return { request: 'id' } before the body is ready
+const MAX_RETRIES = 8
+const BASE_DELAY_MS = 400
+function nextDelay(attempt: number) {
+  return Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 2000)
+}
+function unwrapBody(res: any): any {
+  if (res && typeof res === 'object') {
+    if ('body' in res && res.body != null) return res.body
+    if ('payload' in res && (res as any).payload != null) return (res as any).payload
+    if ('result' in res && (res as any).result != null) return (res as any).result
+    if ('content' in res && (res as any).content != null) return (res as any).content
+  }
+  return res
 }
 
 
@@ -336,18 +352,50 @@ function getLitterKey(motherId: string, lit: Litter) {
   return `${motherId}|${internal || lit.litterId}`
 }
 
-async function loadMothers() {
+async function loadMothers(attempt = 0) {
   mothersLoading.value = true
   mothersError.value = null
   try {
-    const res = await postJson<any, any>('/api/ReproductionTracking/_listMothers', {})
+    const raw = await postJson<any, any>('/api/ReproductionTracking/_listMothers', {})
+    const res = unwrapBody(raw)
     let list: any = []
+    const tryParse = (x: any) => {
+      if (typeof x === 'string') { try { return JSON.parse(x) } catch { return x } }
+      return x
+    }
+    function extractArray(node: any, depth = 0): any[] | null {
+      if (node == null || depth > 4) return null
+      const v = tryParse(node)
+      if (Array.isArray(v)) return v
+      if (v && typeof v === 'object') {
+        const keys = ['mothers','mother','items','data','list','Names','names','Reports','reports','Body','body']
+        for (const k of keys) {
+          if (k in v) {
+            const arr = extractArray((v as any)[k], depth + 1)
+            if (Array.isArray(arr)) return arr
+          }
+        }
+        for (const val of Object.values(v)) {
+          const arr = extractArray(val, depth + 1)
+          if (Array.isArray(arr)) return arr
+        }
+      }
+      return null
+    }
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
       if (Array.isArray((res as any).mothers)) list = (res as any).mothers
       else if (Array.isArray((res as any).mother)) list = (res as any).mother
       else if (Array.isArray((res as any).items)) list = (res as any).items
       else if (Array.isArray((res as any).data)) list = (res as any).data
+    }
+    if (!Array.isArray(list) || !list.length) {
+      const arr = extractArray(res)
+      if (Array.isArray(arr)) list = arr
+    }
+    if ((!Array.isArray(list) || !list.length) && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadMothers(attempt + 1), nextDelay(attempt))
+      return
     }
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     mothers.value = (list as any[])
@@ -375,8 +423,12 @@ onMounted(() => {
   loadMothers()
 })
 
-// Auto-load reproduction report names when the Reports tab opens
+// Auto-refresh when tabs open
 watch(() => activeTab.value, (t) => {
+  if (t === 'mothers') {
+    // Always refresh the mothers list whenever the Mothers tab is opened
+    loadMothers()
+  }
   if (t === 'reports' && !reproReportNames.value.length && !reproNamesLoading.value) {
     loadReproReportNames()
   }
@@ -426,12 +478,13 @@ async function removeMother(motherId: string) {
   }
 }
 
-async function loadLitters(motherId: string) {
+async function loadLitters(motherId: string, attempt = 0) {
   littersLoading.value[motherId] = true
   littersError.value[motherId] = undefined
   try {
     const payload = { motherId }
-  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listLittersByMother', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_listLittersByMother', payload)
+    const res = unwrapBody(raw)
     let list: any = []
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
@@ -439,6 +492,10 @@ async function loadLitters(motherId: string) {
       else if (Array.isArray((res as any).litter)) list = (res as any).litter
       else if (Array.isArray((res as any).items)) list = (res as any).items
       else if (Array.isArray((res as any).data)) list = (res as any).data
+    }
+    if ((!Array.isArray(list) || !list.length) && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadLitters(motherId, attempt + 1), nextDelay(attempt))
+      return
     }
   const normLitters: Litter[] = (list as any[]).map(l => {
       const isNumeric = (v: any) => typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))
@@ -468,19 +525,24 @@ async function loadLitters(motherId: string) {
   }
 }
 
-async function loadOffspringByLitter(litterId: string) {
+async function loadOffspringByLitter(litterId: string, attempt = 0) {
   if (!litterId) return
   offspringByLitterLoading.value[litterId] = true
   offspringByLitterError.value[litterId] = undefined
   try {
     const payload = { litterId }
-  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listOffspringByLitter', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_listOffspringByLitter', payload)
+    const res = unwrapBody(raw)
     let list: any = []
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
       if (Array.isArray((res as any).offspring)) list = (res as any).offspring
       else if (Array.isArray((res as any).items)) list = (res as any).items
       else if (Array.isArray((res as any).data)) list = (res as any).data
+    }
+    if ((!Array.isArray(list) || !list.length) && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadOffspringByLitter(litterId, attempt + 1), nextDelay(attempt))
+      return
     }
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     const norm = (list as any[]).map(o => ({
@@ -539,11 +601,12 @@ const reproSummaryTextByName = ref<Record<string, string | null>>({})
 const reproSummaryLoadingByName = ref<Record<string, boolean>>({})
 const reproSummaryErrorByName = ref<Record<string, string | null>>({})
 
-async function loadReproReportNames() {
+async function loadReproReportNames(attempt = 0) {
   reproNamesLoading.value = true
   reproNamesError.value = null
   try {
-    const res = await postJson<any, any>('/api/ReproductionTracking/_listReports', {})
+    const raw = await postJson<any, any>('/api/ReproductionTracking/_listReports', {})
+    const res = unwrapBody(raw)
 
     function asArray(maybe: any): any[] {
       return Array.isArray(maybe) ? maybe : []
@@ -585,6 +648,10 @@ async function loadReproReportNames() {
       return walk(body) || []
     }
     const rawList = extractList(res)
+    if ((!Array.isArray(rawList) || !rawList.length) && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadReproReportNames(attempt + 1), nextDelay(attempt))
+      return
+    }
     const names = rawList.map(x => {
       if (typeof x === 'string' || typeof x === 'number') return String(x)
       if (x && typeof x === 'object') return String((x as any).name ?? (x as any).reportName ?? (x as any).id ?? (x as any).Id ?? (x as any)._id ?? '')
@@ -614,12 +681,13 @@ function toggleReproReport(name: string) {
   }
 }
 
-async function loadReproReportByName(name: string) {
+async function loadReproReportByName(name: string, attempt = 0) {
   reproLoadingByName.value[name] = true
   reproErrorByName.value[name] = null
   try {
     const payload = { reportName: name.trim() }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     let obj: any | null = null
     if (typeof res === 'string') {
@@ -641,6 +709,10 @@ async function loadReproReportByName(name: string) {
         } catch {}
       }
     }
+    if (!obj && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadReproReportByName(name, attempt + 1), nextDelay(attempt))
+      return
+    }
     reproReportTextByName.value[name] = text ?? JSON.stringify(res, null, 2)
     reproReportObjByName.value[name] = obj
   } catch (e: any) {
@@ -658,14 +730,15 @@ function reproAiSummaryFor(name: string) {
   return null
 }
 
-async function onLoadReproSummaryByName(name: string) {
+async function onLoadReproSummaryByName(name: string, attempt = 0) {
   const reportName = String(name || '').trim()
   if (!reportName) return
   reproSummaryErrorByName.value[reportName] = null
   reproSummaryLoadingByName.value[reportName] = true
   try {
     const payload = { reportName }
-  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     if (typeof res === 'string') text = res
     else if (res && typeof res === 'object') {
@@ -673,7 +746,18 @@ async function onLoadReproSummaryByName(name: string) {
       text = r.summary ?? r.Summary ?? r.result ?? r.text ?? r.content ?? null
       if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
+    if (!text && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => onLoadReproSummaryByName(name, attempt + 1), nextDelay(attempt))
+      return
+    }
     reproSummaryTextByName.value[reportName] = text ?? JSON.stringify(res, null, 2)
+    // Reflect AI summary immediately in the inline report view
+    const cur = reproReportObjByName.value[reportName]
+    if (cur && typeof cur === 'object') {
+      reproReportObjByName.value[reportName] = { ...cur, aiGeneratedSummary: reproSummaryTextByName.value[reportName] }
+    }
+    // Optionally refresh to pick up server-side persistence
+    loadReproReportByName(reportName)
   } catch (e: any) {
     reproSummaryErrorByName.value[reportName] = e?.message ?? String(e)
   } finally {
@@ -785,7 +869,7 @@ const aiSummaryObj = computed(() => {
 })
 
 
-async function onLoadReport() {
+async function onLoadReport(attempt = 0) {
   lookupError.value = null
   reportText.value = null
   summaryText.value = null
@@ -794,7 +878,8 @@ async function onLoadReport() {
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
     // Canonical endpoint for viewing reproduction reports
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     if (typeof res === 'string') {
       text = res
@@ -810,6 +895,10 @@ async function onLoadReport() {
         reportObj.value = null
       }
     }
+    if (!reportObj.value && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => onLoadReport(attempt + 1), nextDelay(attempt))
+      return
+    }
     reportText.value = text ?? JSON.stringify(res, null, 2)
   } catch (e: any) {
     lookupError.value = e?.message ?? String(e)
@@ -820,14 +909,15 @@ async function onLoadReport() {
 
 // delete handled at list row level; no delete button in report view
 
-async function onLoadSummary() {
+async function onLoadSummary(attempt = 0) {
   summaryError.value = null
   summaryText.value = null
   if (!lookup.value.reportName) return
   summaryLoading.value = true
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
-  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     if (typeof res === 'string') text = res
     else if (res && typeof res === 'object') {
@@ -835,7 +925,15 @@ async function onLoadSummary() {
       text = r.summary ?? r.Summary ?? r.result ?? r.text ?? r.content ?? null
       if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
+    if (!text && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => onLoadSummary(attempt + 1), nextDelay(attempt))
+      return
+    }
     summaryText.value = text ?? JSON.stringify(res, null, 2)
+    // Update report object so AI Summary renders immediately
+    if (reportObj.value && typeof reportObj.value === 'object') {
+      reportObj.value = { ...reportObj.value, aiGeneratedSummary: summaryText.value }
+    }
   } catch (e: any) {
     summaryError.value = e?.message ?? String(e)
   } finally {

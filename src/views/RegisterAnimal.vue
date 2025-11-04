@@ -198,14 +198,14 @@ async function submit() {
       throw new Error('This ID already exists. Please choose a different ID.')
     }
 
-    // Build payload with optional fields included only when provided
+    // Build payload and always include breed and notes as strings (empty when not provided)
     const payload: Req = {
       id: form.id,
       species: form.species,
       sex: form.sex,
       birthDate: form.birthDate,
-      ...(form.breed ? { breed: form.breed } : {}),
-      ...(form.notes ? { notes: form.notes } : {})
+      breed: form.breed || '',
+      notes: form.notes || ''
     }
 
     const res = await postJson<Req, Res>('/api/AnimalIdentity/registerAnimal', payload)

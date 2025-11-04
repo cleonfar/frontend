@@ -162,15 +162,30 @@ import { normalizeAiSummary } from '@/utils/aiSummary'
 
 const formatDate = formatDateMDY
 
+// Ack/backoff helpers for responses that return only { request: 'id' } initially
+const MAX_RETRIES = 8
+const BASE_DELAY_MS = 400
+function nextDelay(attempt: number) { return Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 2000) }
+function unwrapBody(res: any): any {
+  if (res && typeof res === 'object') {
+    if ('body' in res && (res as any).body != null) return (res as any).body
+    if ('payload' in res && (res as any).payload != null) return (res as any).payload
+    if ('result' in res && (res as any).result != null) return (res as any).result
+    if ('content' in res && (res as any).content != null) return (res as any).content
+  }
+  return res
+}
+
 const reproReportNames = ref<string[]>([])
 const reproNamesLoading = ref(false)
 const reproNamesError = ref<string | null>(null)
 
-async function loadReproReportNames() {
+async function loadReproReportNames(attempt = 0) {
   reproNamesLoading.value = true
   reproNamesError.value = null
   try {
-    const res = await postJson<any, any>('/api/ReproductionTracking/_listReports', {})
+    const raw = await postJson<any, any>('/api/ReproductionTracking/_listReports', {})
+    const res = unwrapBody(raw)
     function tryParseJson(text: any): any {
       if (typeof text !== 'string') return text
       try { return JSON.parse(text) } catch {
@@ -206,6 +221,10 @@ async function loadReproReportNames() {
       return walk(body) || []
     }
     const rawList = extractList(res)
+    if ((!Array.isArray(rawList) || !rawList.length) && raw && typeof raw === 'object' && 'request' in raw && attempt < MAX_RETRIES) {
+      setTimeout(() => loadReproReportNames(attempt + 1), nextDelay(attempt))
+      return
+    }
     const names = rawList.map(x => {
       if (typeof x === 'string' || typeof x === 'number') return String(x)
       if (x && typeof x === 'object') return String((x as any).name ?? (x as any).reportName ?? (x as any).id ?? (x as any).Id ?? (x as any)._id ?? '')
@@ -250,7 +269,8 @@ async function onLoadReport() {
   lookupLoading.value = true
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_viewReport', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     if (typeof res === 'string') {
       text = res
@@ -265,6 +285,11 @@ async function onLoadReport() {
       } else {
         reportObj.value = null
       }
+    }
+    // If only an ack was returned, retry briefly
+    if (!reportObj.value && raw && typeof raw === 'object' && 'request' in raw) {
+      setTimeout(() => onLoadReport(), nextDelay(0))
+      return
     }
     reportText.value = text ?? JSON.stringify(res, null, 2)
   } catch (e: any) {
@@ -283,7 +308,8 @@ async function onLoadSummary() {
   summaryLoading.value = true
   try {
     const payload = { reportName: lookup.value.reportName.trim() }
-  const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const raw = await postJson<typeof payload, any>('/api/ReproductionTracking/_aiSummary', payload)
+    const res = unwrapBody(raw)
     let text: string | null = null
     if (typeof res === 'string') text = res
     else if (res && typeof res === 'object') {
@@ -291,7 +317,15 @@ async function onLoadSummary() {
       text = r.summary ?? r.Summary ?? r.result ?? r.text ?? r.content ?? null
       if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
+    if (!text && raw && typeof raw === 'object' && 'request' in raw) {
+      setTimeout(() => onLoadSummary(), nextDelay(0))
+      return
+    }
     summaryText.value = text ?? JSON.stringify(res, null, 2)
+    // Update report object so the AI Summary block renders immediately when present
+    if (reportObj.value && typeof reportObj.value === 'object') {
+      reportObj.value = { ...reportObj.value, aiGeneratedSummary: summaryText.value }
+    }
   } catch (e: any) {
     summaryError.value = e?.message ?? String(e)
   } finally {

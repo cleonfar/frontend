@@ -138,6 +138,59 @@ const motherBulkWeanBusy = ref(false)
 const motherBulkWeanErr = ref<string | null>(null)
 const motherBulkWeanResults = ref<string[]>([])
 
+// Ack/backoff + envelope unwrapping helpers (match other Reproduction pages)
+const MAX_RETRIES = 5
+const BASE_DELAY_MS = 250
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
+const nextDelay = (attempt: number) => Math.min(2000, BASE_DELAY_MS * Math.pow(2, attempt))
+
+function tryParseJSON<T = any>(val: any): T | any {
+  if (typeof val === 'string') {
+    try { return JSON.parse(val) } catch { return val }
+  }
+  return val
+}
+
+function unwrapEnvelope(obj: any): any {
+  let cur = tryParseJSON(obj)
+  let prev: any
+  const keys = ['body','Body','payload','result','content','data','Data','Report','report']
+  while (cur && typeof cur === 'object' && keys.some(k => k in cur) && cur !== prev) {
+    prev = cur
+    const next = (cur as any).body ?? (cur as any).Body ?? (cur as any).payload ?? (cur as any).result ?? (cur as any).content ?? (cur as any).data ?? (cur as any).Data ?? (cur as any).Report ?? (cur as any).report
+    cur = tryParseJSON(next)
+  }
+  return cur
+}
+
+function extractArray(obj: any, preferredKeys: string[]): any[] {
+  const o = tryParseJSON(unwrapEnvelope(obj))
+  if (Array.isArray(o)) return o
+  const keys = [
+    ...preferredKeys,
+    'litters','litter','offspring','items','data','list','results','children',
+    'Litters','Litter','Offspring','Items','Data','List','Results','Children'
+  ]
+  if (o && typeof o === 'object') {
+    for (const k of keys) {
+      const v = (o as any)[k]
+      if (Array.isArray(v)) return v
+    }
+    // scan one level deep
+    for (const v of Object.values(o)) {
+      if (Array.isArray(v)) return v
+      const vv = tryParseJSON(v)
+      if (vv && typeof vv === 'object') {
+        for (const k of keys) {
+          const nested = (vv as any)[k]
+          if (Array.isArray(nested)) return nested
+        }
+      }
+    }
+  }
+  return []
+}
+
 function normalizeLitter(l: any): Litter | null {
   if (!l) return null
   const isNumeric = (v: any) => typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))
@@ -157,21 +210,27 @@ async function loadLitters() {
   littersError.value = null
   try {
     const payload = { motherId: motherId.value }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listLittersByMother', payload)
-    let list: any[] = []
-    if (Array.isArray(res)) list = res
-    else if (res && typeof res === 'object') {
-      if (Array.isArray(res.litters)) list = res.litters
-      else if (Array.isArray((res as any).litter)) list = (res as any).litter
-      else if (Array.isArray(res.items)) list = res.items
-      else if (Array.isArray(res.data)) list = res.data
+    let res: any
+    let attempt = 0
+    // Ack/retry loop
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listLittersByMother', payload)
+      const unwrapped = unwrapEnvelope(res)
+      const looksAck = res && typeof res === 'object' && typeof (res as any).request === 'string' && (!unwrapped || (Array.isArray(unwrapped) ? unwrapped.length === 0 : (typeof unwrapped !== 'object' || Object.keys(unwrapped).length === 0)))
+      if (looksAck && attempt < MAX_RETRIES) {
+        await sleep(nextDelay(attempt++))
+        continue
+      }
+      break
     }
+    const list = extractArray(res, ['litters','litter'])
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     const normLitters = list.map(normalizeLitter).filter(Boolean) as Litter[]
     normLitters.sort((a, b) => collator.compare(a.litterId, b.litterId))
     litters.value = normLitters
-    // Load offspring for each litter
-    await Promise.all(normLitters.map(l => loadOffspringByLitter(l.litterId)))
+    // Load offspring for each litter (use internal id for payload if available, but store by display id)
+    await Promise.all(normLitters.map(l => loadOffspringByLitter(String(l.internalLitterId || l.litterId), l.litterId)))
   } catch (e: any) {
     littersError.value = e?.message ?? String(e)
   } finally {
@@ -179,35 +238,43 @@ async function loadLitters() {
   }
 }
 
-async function loadOffspringByLitter(litterId: string) {
-  offspringByLitterLoading.value[litterId] = true
-  offspringByLitterError.value[litterId] = undefined
+async function loadOffspringByLitter(payloadLitterId: string, uiKey?: string) {
+  const storeKey = uiKey || payloadLitterId
+  offspringByLitterLoading.value[storeKey] = true
+  offspringByLitterError.value[storeKey] = undefined
   try {
-    const payload = { litterId }
-    const res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listOffspringByLitter', payload)
-    let list: any[] = []
-    if (Array.isArray(res)) list = res
-    else if (res && typeof res === 'object') {
-      if (Array.isArray((res as any).offspring)) list = (res as any).offspring
-      else if (Array.isArray(res.items)) list = res.items
-      else if (Array.isArray(res.data)) list = res.data
+    const payload = { litterId: payloadLitterId }
+    let res: any
+    let attempt = 0
+    // Ack/retry loop
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      res = await postJson<typeof payload, any>('/api/ReproductionTracking/_listOffspringByLitter', payload)
+      const unwrapped = unwrapEnvelope(res)
+      const looksAck = res && typeof res === 'object' && typeof (res as any).request === 'string' && (!unwrapped || (Array.isArray(unwrapped) ? unwrapped.length === 0 : (typeof unwrapped !== 'object' || Object.keys(unwrapped).length === 0)))
+      if (looksAck && attempt < MAX_RETRIES) {
+        await sleep(nextDelay(attempt++))
+        continue
+      }
+      break
     }
+    const list = extractArray(res, ['offspring'])
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     const norm = list.map(o => ({
       offspringId: String((o as any).externalId ?? (o as any).ExternalId ?? (o as any).offspringId ?? (o as any).OffspringId ?? (o as any).id ?? (o as any).Id ?? (o as any)._id ?? ''),
       sex: (o as any).sex ?? (o as any).Sex,
       notes: (o as any).notes ?? (o as any).Notes,
-      litterId: litterId,
+      litterId: storeKey,
       isAlive: (o as any).isAlive ?? (o as any).alive ?? (o as any).Alive,
       survivedTillWeaning: (o as any).survivedTillWeaning ?? (o as any).survivedUntilWeaning ?? (o as any).weaned,
       weanDate: (o as any).weanDate ?? (o as any).weanedDate ?? (o as any).dateWeaned,
       deathDate: (o as any).deathDate ?? (o as any).dateOfDeath ?? (o as any).diedDate
     })).filter((o: Offspring) => !!o.offspringId).sort((a: Offspring, b: Offspring) => collator.compare(a.offspringId, b.offspringId))
-    offspringByLitter.value[litterId] = norm
+    offspringByLitter.value[storeKey] = norm
   } catch (e: any) {
-    offspringByLitterError.value[litterId] = e?.message ?? String(e)
+    offspringByLitterError.value[storeKey] = e?.message ?? String(e)
   } finally {
-    offspringByLitterLoading.value[litterId] = false
+    offspringByLitterLoading.value[storeKey] = false
   }
 }
 
@@ -226,7 +293,7 @@ async function onAddLitter() {
       motherId: motherId.value,
       birthDate: (addLitter.value.birthDate || '').trim(),
       fatherId: (addLitter.value.fatherId || '').trim() || undefined,
-      notes: (addLitter.value.notes || '').trim() || undefined,
+      notes: (addLitter.value.notes || '').trim(),
     }
     await postJson<typeof p, any>('/api/ReproductionTracking/recordLitter', p)
     addLitterOk.value = true
@@ -250,12 +317,12 @@ async function onAddOffspringForLitter(lit: Litter) {
       litterId: sendLitterId,
       offspringId: (form.offspringId || '').trim(),
       sex: form.sex,
-      notes: (form.notes || '').trim() || undefined,
+      notes: (form.notes || '').trim(),
       motherId: motherId.value
     }
     await postJson<typeof payload, any>('/api/ReproductionTracking/recordOffspring', payload)
     addOkByLitter.value[id] = true
-    await loadOffspringByLitter(String(sendLitterId))
+    await loadOffspringByLitter(String(sendLitterId), id)
     addByLitter.value[id].offspringId = ''
   } catch (e: any) {
     addErrByLitter.value[id] = e?.message ?? String(e)
@@ -339,7 +406,7 @@ async function bulkWeanLitter(lit: Litter) {
   bulkWeanResults.value[uiKey] = []
   try {
     // ensure offspring loaded
-    if (!offspringByLitter.value[uiKey]) await loadOffspringByLitter(String(uiKey))
+    if (!offspringByLitter.value[uiKey]) await loadOffspringByLitter(String(dataKey), uiKey)
   const kids = (offspringByLitter.value[uiKey] || []).filter(o => !o.weanDate && o.survivedTillWeaning !== true && !o.deathDate)
     const today = new Date().toISOString().slice(0,10)
     for (const o of kids) {
@@ -352,7 +419,7 @@ async function bulkWeanLitter(lit: Litter) {
       }
     }
     // refresh display by template key
-    await loadOffspringByLitter(String(uiKey))
+    await loadOffspringByLitter(String(dataKey), uiKey)
   } catch (e: any) {
     bulkWeanErr.value[uiKey] = e?.message ?? String(e)
   } finally {
@@ -368,9 +435,10 @@ async function bulkWeanMother() {
   try {
     const today = new Date().toISOString().slice(0,10)
     for (const lit of litters.value) {
-      const lid = lit.internalLitterId || lit.litterId
-      if (!offspringByLitter.value[lid]) await loadOffspringByLitter(String(lid))
-      const kids = (offspringByLitter.value[lid] || []).filter(o => !o.weanDate && o.survivedTillWeaning !== true && !o.deathDate)
+      const lid = lit.internalLitterId || lit.litterId // payload id
+      const uiKey = lit.litterId
+      if (!offspringByLitter.value[uiKey]) await loadOffspringByLitter(String(lid), uiKey)
+      const kids = (offspringByLitter.value[uiKey] || []).filter(o => !o.weanDate && o.survivedTillWeaning !== true && !o.deathDate)
       for (const o of kids) {
         try {
           const p: any = { offspringId: o.offspringId, date: today, weanDate: today, notes: `Weaned via mother bulk (${motherId.value})` }
@@ -380,7 +448,7 @@ async function bulkWeanMother() {
           motherBulkWeanResults.value.push(`FAIL ${o.offspringId}: ${e?.message ?? String(e)}`)
         }
       }
-      await loadOffspringByLitter(String(lid))
+      await loadOffspringByLitter(String(lid), uiKey)
     }
   } catch (e: any) {
     motherBulkWeanErr.value = e?.message ?? String(e)

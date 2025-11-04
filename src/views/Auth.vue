@@ -52,13 +52,14 @@ async function onSubmit() {
     throw new Error('Username and password are required')
   }
   const payload: any = { username: uname, password: p }
-    const url = mode.value === 'register' ? '/api/UserAuthentification/register' : '/api/UserAuthentification/login'
+  const url = mode.value === 'register' ? '/api/UserAuthentication/register' : '/api/UserAuthentication/login'
     const res = await postJson<typeof payload, any>(url, payload)
     // Expect backend to return { token, username? }
-    const token = (res && typeof res === 'object') ? (res.token ?? (res as any).sessionToken ?? (res as any).jwt ?? null) : null
+  const token = (res && typeof res === 'object') ? (res.token ?? (res as any).sessionToken ?? (res as any).jwt ?? null) : null
     if (!token) throw new Error('Login failed: missing session token in response')
-    const displayName = (res && typeof res === 'object') ? (res.username ?? (res as any).user ?? (res as any).name ?? null) : null
-    loginWithToken(String(token), displayName ? String(displayName) : null)
+  let displayName = (res && typeof res === 'object') ? (res.username ?? (res as any).user ?? (res as any).name ?? null) : null
+  if (!displayName) displayName = uname // fallback to entered username for header display
+  loginWithToken(String(token), displayName ? String(displayName) : null)
     const params = new URLSearchParams(routeQuery)
     const redirect = params.get('redirect') || '/'
     if (router && typeof router.push === 'function') router.push(redirect)

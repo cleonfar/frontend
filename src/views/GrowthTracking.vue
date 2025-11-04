@@ -28,9 +28,17 @@
             <tr class="clickable-row" @click="toggleReport(name)">
               <td>{{ name }}</td>
               <td>
-                <button class="danger" @click.stop="onDeleteWeightReportName(name)" :disabled="rowDeleting[name]">
-                  {{ rowDeleting[name] ? 'Deleting…' : 'Delete' }}
-                </button>
+                <template v-if="rowConfirmDelete[name]">
+                  <button class="danger" @click.stop.prevent="confirmDelete(name)" :disabled="rowDeleting[name]">
+                    {{ rowDeleting[name] ? 'Deleting…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" @click.stop.prevent="rowConfirmDelete[name] = false" :disabled="rowDeleting[name]">Cancel</button>
+                </template>
+                <template v-else>
+                  <button class="danger" @click.stop.prevent="rowConfirmDelete[name] = true" :disabled="rowDeleting[name]">
+                    Delete
+                  </button>
+                </template>
               </td>
             </tr>
             <tr v-if="expandedReport[name]">
@@ -285,7 +293,20 @@
             <tr>
               <td v-if="selectMode"><input type="checkbox" :checked="isSelected(id)" @change="toggleSelected(id)" /></td>
               <td><router-link :to="`/animals/${encodeURIComponent(id)}`">{{ id }}</router-link></td>
-              <td><button @click="toggleAnimalRecords(id)">{{ expanded[id] ? 'Hide weights' : 'View weights' }}</button></td>
+              <td class="actions-cell">
+                <button @click="toggleAnimalRecords(id)">{{ expanded[id] ? 'Hide weights' : 'View weights' }}</button>
+                <template v-if="rowConfirmDeleteAnimal[id]">
+                  <button class="danger" @click.stop.prevent="confirmDeleteAnimal(id)" :disabled="rowDeletingAnimal[id]">
+                    {{ rowDeletingAnimal[id] ? 'Deleting…' : 'Confirm' }}
+                  </button>
+                  <button class="ml" @click.stop.prevent="rowConfirmDeleteAnimal[id] = false" :disabled="rowDeletingAnimal[id]">Cancel</button>
+                </template>
+                <template v-else>
+                  <button class="danger" @click.stop.prevent="rowConfirmDeleteAnimal[id] = true" :disabled="rowDeletingAnimal[id]">
+                    Delete
+                  </button>
+                </template>
+              </td>
             </tr>
             <tr v-if="expanded[id]">
               <td colspan="2">
@@ -301,6 +322,16 @@
                         <strong>{{ r.weight }}</strong>
                         <span> kg</span>
                         <span v-if="r.notes" class="muted"> ({{ r.notes }})</span>
+                        <template v-if="weightRowConfirmDelete[id] && weightRowConfirmDelete[id][r.date]">
+                          <button class="ml danger" @click.stop.prevent="confirmRemoveWeightRecord(id, r.date)" :disabled="weightRowDeleting[id] && weightRowDeleting[id][r.date]">
+                            {{ (weightRowDeleting[id] && weightRowDeleting[id][r.date]) ? 'Deleting…' : 'Confirm' }}
+                          </button>
+                          <button class="ml" @click.stop.prevent="weightRowConfirmDelete[id][r.date] = false" :disabled="weightRowDeleting[id] && weightRowDeleting[id][r.date]">Cancel</button>
+                        </template>
+                        <template v-else>
+                          <button class="ml danger" @click.stop.prevent="(weightRowConfirmDelete[id] = weightRowConfirmDelete[id] || {}, weightRowConfirmDelete[id][r.date] = true)" :disabled="weightRowDeleting[id] && weightRowDeleting[id][r.date]">Delete</button>
+                        </template>
+                        <span v-if="removeWeightError[id] && removeWeightError[id][r.date]" class="error ml">{{ removeWeightError[id][r.date] }}</span>
                       </li>
                     </ul>
                   </div>
@@ -314,6 +345,7 @@
         </tbody>
       </table>
       <div v-else-if="!animalsLoading">No animals found.</div>
+      <div v-if="deleteAnimalError" class="error mt">{{ deleteAnimalError }}</div>
     </section>
 
     <!-- Old lookup/summary removed from Weights; use Reports hub for details -->
@@ -327,6 +359,10 @@ import { formatDateMDY } from '@/utils/format'
 import { normalizeAiSummary } from '@/utils/aiSummary'
 
 const formatDate = formatDateMDY
+
+// Async ack handling for Growth/Reports
+const MAX_RETRIES = 8
+const BASE_DELAY_MS = 400
 
 // Tabs
 const props = defineProps<{ initialTab?: 'record' | 'browse' | 'reports' }> ()
@@ -362,7 +398,8 @@ async function onRecordWeight() {
       // Also send epoch milliseconds for backends expecting a numeric timestamp
       dateGeneratedMs: new Date(`${weightForm.value.dateGenerated}T00:00:00Z`).getTime(),
       weight: Number(weightForm.value.weight),
-      notes: (weightForm.value.notes || '').trim() || undefined
+      // Always include notes as a string (empty when not provided)
+      notes: (weightForm.value.notes || '').trim()
     }
     await postJson<typeof payload, any>('/api/GrowthTracking/recordWeight', payload)
     recordOk.value = true
@@ -418,9 +455,16 @@ const expanded = ref<Record<string, boolean>>({})
 const weightsLoading = ref<Record<string, boolean>>({})
 const weightsError = ref<Record<string, string | undefined>>({})
 const weightsByAnimal = ref<Record<string, WeightRecord[]>>({})
+// Inline remove-weight controls state per animal/date
+const weightRowConfirmDelete = ref<Record<string, Record<string, boolean>>>({})
+const weightRowDeleting = ref<Record<string, Record<string, boolean>>>({})
+const removeWeightError = ref<Record<string, Record<string, string | undefined>>>({})
 const selectMode = ref(false)
 const selected = ref<Record<string, boolean>>({})
 const showBatch = ref(false)
+const rowConfirmDeleteAnimal = ref<Record<string, boolean>>({})
+const rowDeletingAnimal = ref<Record<string, boolean>>({})
+const deleteAnimalError = ref<string | null>(null)
 
 function toggleSelectMode() {
   selectMode.value = !selectMode.value
@@ -546,7 +590,7 @@ const summaryRows = computed(() => {
   })
 })
 
-async function onLoadReport() {
+async function onLoadReport(attempt = 0) {
   lookupError.value = null
   reportText.value = null
   summaryText.value = null
@@ -562,7 +606,13 @@ async function onLoadReport() {
       if (typeof node === 'string') {
         try { const j = JSON.parse(node); return findReport(j, depth + 1) } catch { return null }
       }
-      if (Array.isArray(node)) return null
+      if (Array.isArray(node)) {
+        for (const el of node) {
+          const found = findReport(el, depth + 1)
+          if (found) return found
+        }
+        return null
+      }
       if (typeof node === 'object') {
         const obj = node as any
         // Normalize case variants and stringified results
@@ -580,7 +630,7 @@ async function onLoadReport() {
           }
           return obj
         }
-        const keys = ['data','payload','body','result','Result','content','value','report']
+        const keys = ['data','payload','body','result','Result','content','value','report','reports']
         for (const k of keys) {
           if (k in obj) {
             const found = findReport((obj as any)[k], depth + 1)
@@ -600,6 +650,11 @@ async function onLoadReport() {
       const tCandidate: any = r.Results ?? r.results ?? r.report ?? r.text ?? r.content ?? r.data ?? null
       text = typeof tCandidate === 'string' ? tCandidate : (tCandidate && typeof tCandidate === 'object' ? JSON.stringify(tCandidate, null, 2) : null)
       reportObj.value = findReport(r)
+      if (!reportObj.value && r.request && attempt < MAX_RETRIES) {
+        const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 2000)
+        setTimeout(() => onLoadReport(attempt + 1), delay)
+        return
+      }
     }
     if (!text) {
       try { text = JSON.stringify(res, null, 2) } catch { text = String(res) }
@@ -628,31 +683,115 @@ const reportTextByName = ref<Record<string, string | null>>({})
 const summaryTextByName = ref<Record<string, string | null>>({})
 const summaryLoadingByName = ref<Record<string, boolean>>({})
 const summaryErrorByName = ref<Record<string, string | null>>({})
+const rowConfirmDelete = ref<Record<string, boolean>>({})
+// If navigated with ?name=XYZ, auto-open this report after list load
+const pendingOpenReportName = ref<string | null>(null)
 
-async function loadWeightReportNames() {
-  reportNamesLoading.value = true
-  reportNamesError.value = null
+async function loadWeightReportNames(attempt = 0) {
+  if (attempt === 0) {
+    reportNamesLoading.value = true
+    reportNamesError.value = null
+  }
   try {
     const res = await postJson<any, any>('/api/GrowthTracking/_listReports', {})
-    let list: any[] = []
-    let obj: any = res
-    if (typeof res === 'string') {
-      try { obj = JSON.parse(res) } catch { obj = res }
+    function tryParseJson(text: any): any {
+      if (typeof text !== 'string') return text
+      try { return JSON.parse(text) } catch {
+        const s = String(text)
+        if (s.includes('\n')) return s.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
+        if (s.includes(',')) return s.split(',').map(x => x.trim()).filter(Boolean)
+        return text
+      }
     }
-    if (Array.isArray(obj)) list = obj
-    else if (obj && typeof obj === 'object') {
-      if (Array.isArray(obj.names)) list = obj.names
-      else if (Array.isArray(obj.reports)) list = obj.reports
-      else if (Array.isArray(obj.items)) list = obj.items
-      else if (Array.isArray(obj.data)) list = obj.data
+    function extractList(body: any): any[] {
+      const seen = new Set<any>()
+      function walk(node: any, depth = 0): any[] | null {
+        if (node == null || depth > 4 || seen.has(node)) return null
+        seen.add(node)
+        const b = tryParseJson(node)
+        if (Array.isArray(b)) return b
+        if (b && typeof b === 'object') {
+          const keys = ['names','Names','reports','Reports','reportNames','items','Items','data','Data','list','List','result','Result','results','Results','content','Content','payload','Payload','body','Body']
+          for (const k of keys) {
+            if (k in b) {
+              const v = (b as any)[k]
+              const arr = walk(v, depth + 1)
+              if (Array.isArray(arr)) return arr
+            }
+          }
+          for (const v of Object.values(b)) {
+            const arr = walk(v, depth + 1)
+            if (Array.isArray(arr)) return arr
+          }
+        }
+        return null
+      }
+      return walk(body) || []
     }
-    const names = list.map(x => {
-      if (typeof x === 'string' || typeof x === 'number') return String(x)
-      if (x && typeof x === 'object') return String((x as any).name ?? (x as any).reportName ?? (x as any).id ?? '')
-      return ''
-    }).filter(Boolean)
+
+    let rawList: any[] | null = null
+    const r: any = res
+    if (r && typeof r === 'object') {
+      if (Array.isArray(r.body)) rawList = r.body
+      else if (r.body && typeof r.body === 'object') {
+        if (Array.isArray(r.body.reports)) rawList = r.body.reports
+        else if (Array.isArray(r.body.Reports)) rawList = r.body.Reports
+      }
+      if (!rawList) {
+        if (Array.isArray(r.reports)) rawList = r.reports
+        else if (Array.isArray(r.Reports)) rawList = r.Reports
+        else if (Array.isArray((r as any).Body)) rawList = (r as any).Body
+      }
+    }
+    if (!rawList) rawList = extractList(res)
+    if ((!rawList || rawList.length === 0) && r && typeof r === 'object' && 'request' in r && attempt < MAX_RETRIES) {
+      const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 2000)
+      setTimeout(() => loadWeightReportNames(attempt + 1), delay)
+      return
+    }
+    const list: any[] = Array.isArray(rawList) ? rawList : []
+    const used = new Map<string, number>()
+    const looksLikeReport = (obj: any) => obj && typeof obj === 'object' && (('results' in obj) || ('Results' in obj) || ('reportName' in obj) || ('ReportName' in obj) || ('aiGeneratedSummary' in obj))
+    const norm = (o: any) => {
+      const x: any = { ...o }
+      if (typeof x.results === 'string') { try { x.results = JSON.parse(x.results) } catch {} }
+      if (Array.isArray(x.Results) && !Array.isArray(x.results)) x.results = x.Results
+      return x
+    }
+    const producedNames: string[] = []
+    reportObjByName.value = {}
+    list.forEach((x, i) => {
+      if (typeof x === 'string' || typeof x === 'number') {
+        const base = String(x)
+        const n = used.has(base) ? `${base} (${(used.get(base) || 1) + 1})` : base
+        used.set(base, (used.get(base) || 0) + 1)
+        producedNames.push(n)
+      } else if (x && typeof x === 'object') {
+        const base0 = (x as any).name ?? (x as any).reportName ?? (x as any).id
+        let base = base0 != null && String(base0).trim() ? String(base0).trim() : `Report ${i + 1}`
+        const n = used.has(base) ? `${base} (${(used.get(base) || 1) + 1})` : base
+        used.set(base, (used.get(base) || 0) + 1)
+        producedNames.push(n)
+        if (looksLikeReport(x)) {
+          reportObjByName.value[n] = norm(x)
+        }
+      }
+    })
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-    weightReportNames.value = names.sort((a, b) => collator.compare(a, b))
+    weightReportNames.value = producedNames.sort((a, b) => collator.compare(a, b))
+    // If we have a pending deep-linked name, expand it now (if present)
+    if (pendingOpenReportName.value) {
+      const target = pendingOpenReportName.value
+      if (weightReportNames.value.includes(target)) {
+        // Ensure row is expanded and content loaded
+        expandedReport.value[target] = true
+        if (!reportObjByName.value[target] && !reportTextByName.value[target] && !loadingReportByName.value[target]) {
+          loadReportByName(target)
+        }
+        // Clear pending once handled
+        pendingOpenReportName.value = null
+      }
+    }
   } catch (e: any) {
     reportNamesError.value = e?.message ?? String(e)
   } finally {
@@ -675,7 +814,7 @@ function toggleReport(name: string) {
   }
 }
 
-async function loadReportByName(name: string) {
+async function loadReportByName(name: string, attempt = 0) {
   loadingReportByName.value[name] = true
   errorReportByName.value[name] = null
   try {
@@ -689,7 +828,7 @@ async function loadReportByName(name: string) {
       if (typeof node === 'string') {
         try { const j = JSON.parse(node); return findReport(j, depth + 1) } catch { return null }
       }
-      if (Array.isArray(node)) return null
+      if (Array.isArray(node)) { for (const el of node) { const f = findReport(el, depth + 1); if (f) return f } return null }
       if (typeof node === 'object') {
         const o = node as any
         const hasResults = 'results' in o || 'Results' in o
@@ -701,7 +840,7 @@ async function loadReportByName(name: string) {
           if (typeof o.Results === 'string') { try { o.Results = JSON.parse(o.Results) } catch {} }
           return o
         }
-        const keys = ['data','payload','body','result','Result','content','value','report']
+        const keys = ['data','payload','body','result','Result','content','value','report','reports']
         for (const k of keys) {
           if (k in o) {
             const found = findReport(o[k], depth + 1)
@@ -720,6 +859,11 @@ async function loadReportByName(name: string) {
       const tCandidate: any = r.Results ?? r.results ?? r.report ?? r.text ?? r.content ?? r.data ?? null
       text = typeof tCandidate === 'string' ? tCandidate : (tCandidate && typeof tCandidate === 'object' ? JSON.stringify(tCandidate, null, 2) : null)
       obj = findReport(r)
+      if (!obj && r.request && attempt < MAX_RETRIES) {
+        const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), 2000)
+        setTimeout(() => loadReportByName(name, attempt + 1), delay)
+        return
+      }
     }
     if (!text) {
       try { text = JSON.stringify(res, null, 2) } catch { text = String(res) }
@@ -789,6 +933,14 @@ async function onLoadSummaryByName(name: string) {
       if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
     summaryTextByName.value[reportName] = text ?? JSON.stringify(res, null, 2)
+    // Immediately reflect the AI summary in the inline view by setting it on the cached report object
+    const current = reportObjByName.value[reportName]
+    if (current && typeof current === 'object') {
+      reportObjByName.value[reportName] = { ...current, aiGeneratedSummary: summaryTextByName.value[reportName] }
+    }
+    // Optionally refresh from server in case it persisted the summary to the report object
+    // (non-blocking; UI already updated using local assignment above)
+    loadReportByName(reportName)
   } catch (e: any) {
     summaryErrorByName.value[reportName] = e?.message ?? String(e)
   } finally {
@@ -798,27 +950,47 @@ async function onLoadSummaryByName(name: string) {
 
 async function onDeleteWeightReportName(name: string) {
   deleteListError.value = null
-  const reportName = String(name || '').trim()
+  const displayName = String(name || '').trim()
+  // Prefer the actual report object's canonical name if available
+  const canonical = reportObjByName.value[displayName]
+  const reportName = String(
+    (canonical && (canonical.reportName || canonical.name || canonical.ReportName || canonical.Name)) || displayName
+  ).trim()
   if (!reportName) return
-  const ok = confirm(`Delete report "${reportName}"? This cannot be undone.`)
-  if (!ok) return
-  rowDeleting.value[reportName] = true
+  rowDeleting.value[displayName] = true
   try {
     const payload = { reportName }
     await postJson<typeof payload, any>('/api/GrowthTracking/deleteReport', payload)
-    // Remove locally for faster UX, then refresh list
-    weightReportNames.value = weightReportNames.value.filter(n => n !== reportName)
-    if (!weightReportNames.value.length) await loadWeightReportNames()
+    // Clear any cached inline content/state for the deleted report
+    delete expandedReport.value[displayName]
+    delete loadingReportByName.value[displayName]
+    delete errorReportByName.value[displayName]
+    delete reportObjByName.value[displayName]
+    delete reportTextByName.value[displayName]
+    delete summaryTextByName.value[displayName]
+    delete summaryLoadingByName.value[displayName]
+    delete summaryErrorByName.value[displayName]
+    delete rowConfirmDelete.value[displayName]
+    // Remove from the visible list immediately for better UX
+    weightReportNames.value = weightReportNames.value.filter(n => n !== displayName)
+    // Always refresh list to ensure we reflect server state (names may have changed)
+    await loadWeightReportNames()
   } catch (e: any) {
     deleteListError.value = e?.message ?? String(e)
   } finally {
-    rowDeleting.value[reportName] = false
+    rowDeleting.value[displayName] = false
   }
+}
+
+function confirmDelete(name: string) {
+  // Separate small handler to make the template a bit cleaner
+  onDeleteWeightReportName(name)
 }
 
 // Auto-load names when Reports opens, and refresh Browse list when opened
 watch(() => activeTab.value, (t) => {
-  if (t === 'reports' && !weightReportNames.value.length && !reportNamesLoading.value) {
+  if (t === 'reports') {
+    // Always refresh the reports list whenever the Reports tab is opened
     loadWeightReportNames()
   }
   if (t === 'browse') {
@@ -835,6 +1007,28 @@ watch(() => route?.path, (p) => {
     loadAnimalsWithWeightRecords()
   }
 })
+// Watch for deep-link to a specific report name via query param and auto-open it
+watch(() => (route?.query && (route.query as any).name) as any, (n) => {
+  const q = typeof n === 'string' ? n.trim() : ''
+  if (!q) return
+  // Switch to Reports tab and open after list loads
+  activeTab.value = 'reports'
+  pendingOpenReportName.value = q
+  // If names are already loaded, attempt immediate open
+  if (!reportNamesLoading.value && weightReportNames.value.length) {
+    const target = pendingOpenReportName.value
+    if (target && weightReportNames.value.includes(target)) {
+      expandedReport.value[target] = true
+      if (!reportObjByName.value[target] && !reportTextByName.value[target] && !loadingReportByName.value[target]) {
+        loadReportByName(target)
+      }
+      pendingOpenReportName.value = null
+    }
+  } else {
+    // Ensure the list loads
+    loadWeightReportNames()
+  }
+}, { immediate: true })
 
 async function onLoadSummary() {
   summaryError.value = null
@@ -852,6 +1046,12 @@ async function onLoadSummary() {
       if (text && typeof text !== 'string') text = JSON.stringify(text, null, 2)
     }
     summaryText.value = text ?? JSON.stringify(res, null, 2)
+    // Update the current report object so the AI Summary section appears immediately
+    if (reportObj.value && typeof reportObj.value === 'object') {
+      reportObj.value = { ...reportObj.value, aiGeneratedSummary: summaryText.value }
+    }
+    // Optionally reload the report to reflect any persisted changes on the server
+    onLoadReport(0)
   } catch (e: any) {
     summaryError.value = e?.message ?? String(e)
   } finally {
@@ -877,11 +1077,41 @@ async function loadAnimalsWithWeightRecords() {
   try {
     const res = await postJson<any, any>('/api/GrowthTracking/_getAllAnimalsWithWeightRecords', {})
     let list: any = []
+    // Accept direct array
     if (Array.isArray(res)) list = res
+    // Accept common envelope shapes
     else if (res && typeof res === 'object') {
-      if (Array.isArray(res.animals)) list = res.animals
-      else if (Array.isArray(res.items)) list = res.items
-      else if (Array.isArray(res.data)) list = res.data
+      const r: any = res
+      if (Array.isArray(r.animals)) list = r.animals
+      else if (Array.isArray(r.items)) list = r.items
+      else if (Array.isArray(r.data)) list = r.data
+      // Accept nested envelopes like { body: { animals: [...] } }
+      else if (r.body && typeof r.body === 'object') {
+        if (Array.isArray(r.body.animals)) list = r.body.animals
+        else if (Array.isArray(r.body.items)) list = r.body.items
+        else if (Array.isArray(r.body.data)) list = r.body.data
+      }
+      else if (r.payload && typeof r.payload === 'object') {
+        if (Array.isArray(r.payload.animals)) list = r.payload.animals
+        else if (Array.isArray(r.payload.items)) list = r.payload.items
+        else if (Array.isArray(r.payload.data)) list = r.payload.data
+      }
+      else if (r.result && typeof r.result === 'object') {
+        if (Array.isArray(r.result.animals)) list = r.result.animals
+        else if (Array.isArray(r.result.items)) list = r.result.items
+        else if (Array.isArray(r.result.data)) list = r.result.data
+      }
+      else if (r.content && typeof r.content === 'object') {
+        if (Array.isArray(r.content.animals)) list = r.content.animals
+        else if (Array.isArray(r.content.items)) list = r.content.items
+        else if (Array.isArray(r.content.data)) list = r.content.data
+      }
+      // If only a request id was returned, surface a helpful console warning
+      if (!Array.isArray(list) || !list.length) {
+        if (r.request && !r.animals && !(r.body && r.body.animals)) {
+          console.warn('Weights: _getAllAnimalsWithWeightRecords returned request id without animals. Expected array or { animals: string[] }. Response:', r)
+        }
+      }
     }
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
     animalsWithRecords.value = (list as any[])
@@ -913,12 +1143,52 @@ async function loadWeightRecords(animal: string) {
     let list: any = []
     if (Array.isArray(res)) list = res
     else if (res && typeof res === 'object') {
-      if (Array.isArray((res as any).records)) list = (res as any).records
-      else if (Array.isArray((res as any).weights)) list = (res as any).weights
-      else if (Array.isArray((res as any).weightRecords)) list = (res as any).weightRecords
-      else if (Array.isArray((res as any).entries)) list = (res as any).entries
-      else if (Array.isArray((res as any).items)) list = (res as any).items
-      else if (Array.isArray((res as any).data)) list = (res as any).data
+      const r: any = res
+      // Top-level common keys
+      if (Array.isArray(r.records)) list = r.records
+      else if (Array.isArray(r.weights)) list = r.weights
+      else if (Array.isArray(r.weightRecords)) list = r.weightRecords
+      else if (Array.isArray(r.entries)) list = r.entries
+      else if (Array.isArray(r.items)) list = r.items
+      else if (Array.isArray(r.data)) list = r.data
+      // Nested envelope keys: body/payload/result/content
+      else if (r.body && typeof r.body === 'object') {
+        const b = r.body
+        if (Array.isArray(b.weightRecords)) list = b.weightRecords
+        else if (Array.isArray(b.records)) list = b.records
+        else if (Array.isArray(b.weights)) list = b.weights
+        else if (Array.isArray(b.entries)) list = b.entries
+        else if (Array.isArray(b.items)) list = b.items
+        else if (Array.isArray(b.data)) list = b.data
+      } else if (r.payload && typeof r.payload === 'object') {
+        const p = r.payload
+        if (Array.isArray(p.weightRecords)) list = p.weightRecords
+        else if (Array.isArray(p.records)) list = p.records
+        else if (Array.isArray(p.weights)) list = p.weights
+        else if (Array.isArray(p.entries)) list = p.entries
+        else if (Array.isArray(p.items)) list = p.items
+        else if (Array.isArray(p.data)) list = p.data
+      } else if (r.result && typeof r.result === 'object') {
+        const q = r.result
+        if (Array.isArray(q.weightRecords)) list = q.weightRecords
+        else if (Array.isArray(q.records)) list = q.records
+        else if (Array.isArray(q.weights)) list = q.weights
+        else if (Array.isArray(q.entries)) list = q.entries
+        else if (Array.isArray(q.items)) list = q.items
+        else if (Array.isArray(q.data)) list = q.data
+      } else if (r.content && typeof r.content === 'object') {
+        const c = r.content
+        if (Array.isArray(c.weightRecords)) list = c.weightRecords
+        else if (Array.isArray(c.records)) list = c.records
+        else if (Array.isArray(c.weights)) list = c.weights
+        else if (Array.isArray(c.entries)) list = c.entries
+        else if (Array.isArray(c.items)) list = c.items
+        else if (Array.isArray(c.data)) list = c.data
+      }
+      // If only a request id is present, warn to aid troubleshooting
+      if ((!Array.isArray(list) || !list.length) && r.request && !(r.body && (Array.isArray(r.body.weightRecords) || Array.isArray(r.body.records)))) {
+        console.warn('Weights: _getAnimalWeights returned request id without weight records. Expected array or body.weightRecords[]. Response:', r)
+      }
     }
     const normalized = (list as any[]).map(normalizeWeightRecord).filter(Boolean) as WeightRecord[]
     // Sort by date ascending using Date.parse when available
@@ -930,11 +1200,79 @@ async function loadWeightRecords(animal: string) {
       return a.date < b.date ? -1 : 1
     })
     weightsByAnimal.value[animal] = normalized
+    // reset any per-record errors that no longer apply
+    removeWeightError.value[animal] = {}
   } catch (e: any) {
     weightsError.value[animal] = e?.message ?? String(e)
   } finally {
     weightsLoading.value[animal] = false
   }
+}
+
+async function onDeleteAnimal(animalId: string) {
+  deleteAnimalError.value = null
+  const id = String(animalId || '').trim()
+  if (!id) return
+  rowDeletingAnimal.value[id] = true
+  try {
+    // Backend expects the field to be named exactly "animal"
+    const payload: any = { animal: id }
+    await postJson<typeof payload, any>('/api/GrowthTracking/deleteAnimal', payload)
+    // Remove from local lists and clear related UI state
+    animalsWithRecords.value = animalsWithRecords.value.filter(a => a !== id)
+    delete expanded.value[id]
+    delete weightsLoading.value[id]
+    delete weightsError.value[id]
+    delete weightsByAnimal.value[id]
+    delete selected.value[id]
+    rowConfirmDeleteAnimal.value[id] = false
+    // Refresh from server to ensure consistency (optional but safer)
+    await loadAnimalsWithWeightRecords()
+  } catch (e: any) {
+    deleteAnimalError.value = e?.message ?? String(e)
+  } finally {
+    rowDeletingAnimal.value[id] = false
+  }
+}
+
+function confirmDeleteAnimal(id: string) {
+  onDeleteAnimal(id)
+}
+
+async function onRemoveWeightRecord(animal: string, date: string) {
+  const a = String(animal || '').trim()
+  const d = String(date || '').trim()
+  if (!a || !d) return
+  weightRowDeleting.value[a] = weightRowDeleting.value[a] || {}
+  removeWeightError.value[a] = removeWeightError.value[a] || {}
+  weightRowDeleting.value[a][d] = true
+  removeWeightError.value[a][d] = undefined
+  try {
+    const payload: any = { animal: a, date: d }
+    await postJson<typeof payload, any>('/api/GrowthTracking/removeWeightRecord', payload)
+    // Refresh this animal's weights and close the confirm UI
+    await loadWeightRecords(a)
+    if (weightRowConfirmDelete.value[a]) weightRowConfirmDelete.value[a][d] = false
+    // If the animal no longer has records, collapse and clear local state
+    const recs = weightsByAnimal.value[a] || []
+    if (!recs.length) {
+      expanded.value[a] = false
+      delete weightsByAnimal.value[a]
+      delete weightsLoading.value[a]
+      delete weightsError.value[a]
+      delete selected.value[a]
+    }
+    // Always refresh the animals-with-records list to reflect server state
+    await loadAnimalsWithWeightRecords()
+  } catch (e: any) {
+    removeWeightError.value[a][d] = e?.message ?? String(e)
+  } finally {
+    weightRowDeleting.value[a][d] = false
+  }
+}
+
+function confirmRemoveWeightRecord(animal: string, date: string) {
+  onRemoveWeightRecord(animal, date)
 }
 </script>
 

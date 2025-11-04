@@ -7,7 +7,6 @@ import AnimalsList from '@/views/AnimalsList.vue'
 import Animals from '@/views/Animals.vue'
 import ManageGroups from '@/views/ManageGroups.vue'
 import GrowthTracking from '@/views/GrowthTracking.vue'
-import WeightsReports from '@/views/WeightsReports.vue'
 // Lazy-load ReproductionTracking to keep initial bundle small
 const ReproductionTracking = () => import('@/views/ReproductionTracking.vue')
 import ReproReports from '@/views/ReproReports.vue'
@@ -28,7 +27,7 @@ const routes = [
   { path: '/weights', name: 'WeightsHome', component: GrowthTracking, props: { initialTab: 'browse' } },
   { path: '/weights/browse', name: 'WeightsBrowse', component: GrowthTracking, props: { initialTab: 'browse' } },
   { path: '/weights/record', name: 'WeightsRecord', component: GrowthTracking, props: { initialTab: 'record' } },
-  { path: '/weights/reports', name: 'WeightsReports', component: WeightsReports },
+  { path: '/weights/reports', name: 'WeightsReports', component: GrowthTracking, props: { initialTab: 'reports' } },
   { path: '/births', name: 'BirthsAndLitters', component: ReproductionTracking, props: { initialTab: 'mothers' } },
   { path: '/births/reports', name: 'ReproReports', component: ReproReports },
   { path: '/mothers/:id', name: 'MotherDetails', component: () => import('@/views/MotherDetails.vue') },

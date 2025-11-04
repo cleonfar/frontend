@@ -23,8 +23,9 @@
 </template>
 
 <script setup lang="ts">
-import { getCurrentInstance, computed } from 'vue'
+import { getCurrentInstance, computed, ref } from 'vue'
 import { useAuth } from '@/utils/auth'
+import { postJson } from '@/utils/api'
 
 const { user: userRef, isAuthenticated, logoutUser } = useAuth()
 const user = computed(() => userRef.value)
@@ -38,10 +39,21 @@ const isAuthPage = computed(() => {
 })
 const hideNav = computed(() => isAuthPage.value && !isAuthenticated.value)
 
-function onLogout() {
-  logoutUser()
-  if (router && typeof router.push === 'function') router.push('/login')
-  else window.location.href = '/login'
+const loggingOut = ref(false)
+async function onLogout() {
+  if (loggingOut.value) return
+  loggingOut.value = true
+  try {
+    // Notify backend to invalidate the current session token
+    await postJson<any, any>('/api/UserAuthentication/logout', {})
+  } catch (_) {
+    // Ignore errors and proceed with local logout to ensure user is signed out client-side
+  } finally {
+    logoutUser()
+    if (router && typeof router.push === 'function') router.push('/login')
+    else window.location.href = '/login'
+    loggingOut.value = false
+  }
 }
 </script>
 

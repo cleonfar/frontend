@@ -3,7 +3,7 @@
     <h2>Registered Animals</h2>
     <div v-if="loading">Loading...</div>
     <div v-if="error" class="error">Error: {{ error }}</div>
-    <table v-if="animals.length">
+    <table v-if="activeAnimals.length">
       <thead>
         <tr>
           <th>ID</th>
@@ -15,8 +15,8 @@
         </tr>
       </thead>
       <tbody>
-        <template v-for="a in animals" :key="a.id">
-          <tr>
+        <template v-for="a in activeAnimals" :key="a.id">
+          <tr class="clickable-row" @click="onRowClick(a.id, $event)">
             <td>
               <template v-if="a.id && a.id.length">
                 <router-link :to="`/animals/${encodeURIComponent(a.id)}`">{{ a.id }}</router-link>
@@ -30,15 +30,52 @@
             <td>{{ formatDate(a.birthDate) }}</td>
             <td>{{ a.breed ?? '-' }}</td>
             <td class="actions-cell">
-              <button @click="toggleDetails(a.id)">{{ detailsMap[a.id] ? 'Hide' : 'Details' }}</button>
+              <button @click.stop="openMarkSold(a.id)" :disabled="busyIds[a.id] || markSoldOpen[a.id]">{{ markSoldOpen[a.id] ? 'Add notes…' : (busyIds[a.id] ? 'Marking…' : 'Mark sold') }}</button>
+              <button @click.stop="openMarkDead(a.id)" :disabled="busyIds[a.id] || markDeadOpen[a.id]">{{ markDeadOpen[a.id] ? 'Add cause…' : (busyIds[a.id] ? 'Marking…' : 'Mark dead') }}</button>
               <button
                 class="danger"
                 :disabled="removingIds[a.id]"
                 :title="!a.id ? 'Missing ID on this record' : ''"
-                @click.prevent="onRemove(a.id)"
+                @click.prevent.stop="onRemove(a.id)"
               >
                 {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
               </button>
+            </td>
+          </tr>
+          <!-- Slide-down cause of death panel for Mark dead -->
+          <tr v-if="markDeadOpen[a.id]">
+            <td colspan="6">
+              <div class="sell-panel">
+                <label class="row">
+                  <span>Cause of death (optional)</span>
+                  <input
+                    :placeholder="'Add notes (cause, date confirmed)…'"
+                    v-model="deathCause[a.id]"
+                  />
+                </label>
+                <div class="row gap">
+                  <button class="primary" @click="confirmMarkDead(a.id)" :disabled="busyIds[a.id]">Confirm deceased</button>
+                  <button type="button" @click="cancelMarkDead(a.id)" :disabled="busyIds[a.id]">Cancel</button>
+                </div>
+              </div>
+            </td>
+          </tr>
+          <!-- Slide-down buyer notes panel for Mark sold -->
+          <tr v-if="markSoldOpen[a.id]">
+            <td colspan="6">
+              <div class="sell-panel">
+                <label class="row">
+                  <span>Buyer notes (optional)</span>
+                  <input
+                    :placeholder="'Add context (price, buyer, terms)…'"
+                    v-model="buyerNotes[a.id]"
+                  />
+                </label>
+                <div class="row gap">
+                  <button class="primary" @click="confirmMarkSold(a.id)" :disabled="busyIds[a.id]">Confirm sold</button>
+                  <button type="button" @click="cancelMarkSold(a.id)" :disabled="busyIds[a.id]">Cancel</button>
+                </div>
+              </div>
             </td>
           </tr>
           <tr v-if="detailsMap[a.id]">
@@ -49,24 +86,148 @@
         </template>
       </tbody>
     </table>
-    <div v-else-if="!loading">No animals found.</div>
+    <div v-else-if="!loading">No active animals.</div>
+
+    <!-- Sold animals section -->
+    <div class="mt" v-if="soldAnimals.length || (!loading && showSold)">
+      <div class="row between">
+        <h3>Sold animals ({{ soldAnimals.length }})</h3>
+        <button type="button" @click="showSold = !showSold">{{ showSold ? 'Hide' : 'Show' }}</button>
+      </div>
+      <table v-show="showSold && soldAnimals.length">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Species</th>
+            <th>Sex</th>
+            <th>Birth Date</th>
+            <th>Breed</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="a in soldAnimals" :key="'sold_'+a.id">
+            <tr class="clickable-row" @click="onRowClick(a.id, $event)">
+              <td>
+                <router-link v-if="a.id" :to="`/animals/${encodeURIComponent(a.id)}`">{{ a.id }}</router-link>
+                <template v-else><em>(no id)</em></template>
+              </td>
+              <td>{{ a.species }}</td>
+              <td>{{ a.sex }}</td>
+              <td>{{ formatDate(a.birthDate) }}</td>
+              <td>{{ a.breed ?? '-' }}</td>
+              <td class="actions-cell">
+                <button
+                  class="danger"
+                  :disabled="removingIds[a.id]"
+                  :title="!a.id ? 'Missing ID on this record' : ''"
+                  @click.prevent.stop="onRemove(a.id)"
+                >
+                  {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="detailsMap[a.id]">
+              <td colspan="6">
+                <div><strong>Notes:</strong> {{ a.notes ?? '-' }}</div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div v-show="showSold && !soldAnimals.length && !loading" class="muted">No sold animals.</div>
+    </div>
+
+    <!-- Deceased animals section -->
+    <div class="mt" v-if="deadAnimals.length || (!loading && showDead)">
+      <div class="row between">
+        <h3>Deceased animals ({{ deadAnimals.length }})</h3>
+        <button type="button" @click="showDead = !showDead">{{ showDead ? 'Hide' : 'Show' }}</button>
+      </div>
+      <table v-show="showDead && deadAnimals.length">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Species</th>
+            <th>Sex</th>
+            <th>Birth Date</th>
+            <th>Breed</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="a in deadAnimals" :key="'dead_'+a.id">
+            <tr class="clickable-row" @click="onRowClick(a.id, $event)">
+              <td>
+                <router-link v-if="a.id" :to="`/animals/${encodeURIComponent(a.id)}`">{{ a.id }}</router-link>
+                <template v-else><em>(no id)</em></template>
+              </td>
+              <td>{{ a.species }}</td>
+              <td>{{ a.sex }}</td>
+              <td>{{ formatDate(a.birthDate) }}</td>
+              <td>{{ a.breed ?? '-' }}</td>
+              <td class="actions-cell">
+                <button
+                  class="danger"
+                  :disabled="removingIds[a.id]"
+                  :title="!a.id ? 'Missing ID on this record' : ''"
+                  @click.prevent.stop="onRemove(a.id)"
+                >
+                  {{ removingIds[a.id] ? 'Removing…' : 'Remove' }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="detailsMap[a.id]">
+              <td colspan="6">
+                <div><strong>Notes:</strong> {{ a.notes ?? '-' }}</div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div v-show="showDead && !deadAnimals.length && !loading" class="muted">No deceased animals.</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { postJson } from '@/utils/api'
 import { formatDateMDY } from '@/utils/format'
 
 const formatDate = formatDateMDY
 
-type Animal = { id: string; species: string; sex: string; birthDate: string; breed?: string; notes?: string }
+type Animal = { id: string; species: string; sex: string; birthDate: string; breed?: string; notes?: string; status?: string }
 
 const animals = ref<Animal[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const detailsMap = ref<Record<string, boolean>>({})
 const removingIds = ref<Record<string, boolean>>({})
+const busyIds = ref<Record<string, boolean>>({})
+const markSoldOpen = ref<Record<string, boolean>>({})
+const buyerNotes = ref<Record<string, string>>({})
+const markDeadOpen = ref<Record<string, boolean>>({})
+const deathCause = ref<Record<string, string>>({})
+
+const showSold = ref(false)
+const showDead = ref(false)
+const SOLD_KEY = 'animals.showSold'
+const DEAD_KEY = 'animals.showDead'
+onMounted(() => {
+  try {
+    const s = localStorage.getItem(SOLD_KEY)
+    if (s != null) showSold.value = s === '1'
+    const d = localStorage.getItem(DEAD_KEY)
+    if (d != null) showDead.value = d === '1'
+  } catch {}
+})
+watch(showSold, v => { try { localStorage.setItem(SOLD_KEY, v ? '1' : '0') } catch {} })
+watch(showDead, v => { try { localStorage.setItem(DEAD_KEY, v ? '1' : '0') } catch {} })
+
+const activeAnimals = computed(() => animals.value.filter(a => (a.status || 'alive').toLowerCase() !== 'sold' && (a.status || 'alive').toLowerCase() !== 'deceased'))
+const soldAnimals = computed(() => animals.value.filter(a => (a.status || '').toLowerCase() === 'sold'))
+const deadAnimals = computed(() => animals.value.filter(a => (a.status || '').toLowerCase() === 'deceased'))
 
 async function fetchFromBackend() {
   loading.value = true
@@ -103,6 +264,13 @@ function toggleDetails(id: string) {
   detailsMap.value[id] = !detailsMap.value[id]
 }
 
+function onRowClick(id: string, e: MouseEvent) {
+  // Ignore if clicking on interactive elements (safety net; buttons already stop propagation)
+  const target = e.target as HTMLElement | null
+  if (target && target.closest('button, a, input, textarea, select')) return
+  toggleDetails(id)
+}
+
 function normalizeAnimal(a: any): Animal {
   // Try robust ID extraction across common and heuristic variants
   const id = extractId(a)
@@ -112,6 +280,7 @@ function normalizeAnimal(a: any): Animal {
   const birthDate = a?.birthDate ?? a?.birthdate ?? a?.birth_date ?? a?.dob ?? a?.BirthDate ?? ''
   const breed = a?.breed ?? a?.Breed
   const notes = a?.notes ?? a?.Notes
+  const status = a?.status ?? a?.Status
 
   return {
     id: id != null ? String(id) : '',
@@ -119,7 +288,8 @@ function normalizeAnimal(a: any): Animal {
     sex: sex != null ? String(sex) : '',
     birthDate: birthDate != null ? String(birthDate) : '',
     breed: breed != null ? String(breed) : undefined,
-    notes: notes != null ? String(notes) : undefined
+    notes: notes != null ? String(notes) : undefined,
+    status: status != null ? String(status) : undefined
   }
 }
 
@@ -191,6 +361,75 @@ async function onRemove(id: string) {
     error.value = e?.message ?? String(e)
   }
 }
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+async function onMarkSold(id: string) {
+  if (!id || busyIds.value[id]) return
+  // Open inline panel to capture buyer notes
+  // Close any open 'Mark dead' panel for this row
+  markDeadOpen.value[id] = false
+  markSoldOpen.value[id] = true
+  if (!(id in buyerNotes.value)) buyerNotes.value[id] = ''
+}
+
+function openMarkSold(id: string) { onMarkSold(id) }
+
+function cancelMarkSold(id: string) {
+  markSoldOpen.value[id] = false
+}
+
+async function confirmMarkSold(id: string) {
+  if (!id || busyIds.value[id]) return
+  busyIds.value[id] = true
+  error.value = null
+  try {
+    const notes = (buyerNotes.value[id] || '').trim()
+    const payload = { animal: id, date: todayISO(), buyerNotes: notes }
+    await postJson<typeof payload, any>('/api/AnimalIdentity/markAsSold', payload)
+    markSoldOpen.value[id] = false
+    // Refresh list to reflect new status
+    await fetchFromBackend()
+  } catch (e: any) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    busyIds.value[id] = false
+  }
+}
+
+function openMarkDead(id: string) {
+  if (!id || busyIds.value[id]) return
+  // Close any open 'Mark sold' panel for this row
+  markSoldOpen.value[id] = false
+  markDeadOpen.value[id] = true
+  if (!(id in deathCause.value)) deathCause.value[id] = ''
+}
+
+function cancelMarkDead(id: string) {
+  markDeadOpen.value[id] = false
+}
+
+async function confirmMarkDead(id: string) {
+  if (!id || busyIds.value[id]) return
+  busyIds.value[id] = true
+  error.value = null
+  try {
+    const cause = (deathCause.value[id] || '').trim()
+    const payload = { animal: id, date: todayISO(), cause }
+    await postJson<typeof payload, any>('/api/AnimalIdentity/markAsDeceased', payload)
+    markDeadOpen.value[id] = false
+    await fetchFromBackend()
+  } catch (e: any) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    busyIds.value[id] = false
+  }
+}
+
+// Back-compat alias if referenced elsewhere
+function onMarkDead(id: string) { openMarkDead(id) }
 </script>
 
 <style scoped>
@@ -199,4 +438,12 @@ ul { padding-left: 0 }
 li { list-style: none; padding: 0.25rem 0 }
 .actions-cell { display: flex; gap: 0.5rem }
 .danger { color: #b00020 }
+.row { display: flex; align-items: center; gap: 0.5rem }
+.row.between { justify-content: space-between }
+.mt { margin-top: 1rem }
+.muted { color: #666 }
+.sell-panel { background: var(--surface, #fff); border: 1px solid var(--divider, #e5e7eb); border-radius: 8px; padding: 0.75rem; margin-top: 0.25rem }
+.row.gap { gap: 0.5rem }
+.clickable-row { cursor: pointer }
+.clickable-row:hover { background: rgba(0,0,0,0.02) }
 </style>

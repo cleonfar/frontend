@@ -266,6 +266,8 @@ async function onMergeSelected() {
       // Refresh archived list too, since sources are archived after merge
       await loadArchivedHerds()
     }
+    // After the lists are reloaded, refresh any open members panels so they don't appear empty
+    refreshOpenMembers()
     selectedGroups.value = {}
     // Keep select mode active but collapse batch panel until new selection
     batchMerge.value = { targetName: '', description: '' as any }
@@ -567,6 +569,8 @@ async function onMergeHerds() {
     if (showArchived.value) {
       await loadArchivedHerds()
     }
+    // Ensure any expanded members panels are refreshed to reflect updated compositions
+    refreshOpenMembers()
     mergeForm.value = { herdA: '', herdB: '', targetName: '', description: '' as any }
   } catch (e: any) {
     mergeError.value = e?.message ?? String(e)
@@ -603,6 +607,13 @@ async function onRestoreHerd(name: string) {
   }
 }
 
+function refreshOpenMembers() {
+  const names = Object.keys(membersExpanded.value).filter(n => membersExpanded.value[n])
+  for (const name of names) {
+    // Fire and forget; if the herd is in archived list instead, loadHerdMembers will update it
+    loadHerdMembers(name)
+  }
+}
 // Handle split completion from SplitHerd tab: refresh herds and recompute members for affected herds
 async function onSplitCompleted(evt: { source: string; target: string }) {
   try {
