@@ -3,10 +3,8 @@
     <h2>Register Animal</h2>
     <form @submit.prevent="submit">
       <label>ID
-        <input v-model="form.id" @blur="onCheckId" required />
+        <input v-model="form.id" required />
       </label>
-      <div class="hint" v-if="checkingId">Checking ID…</div>
-      <div class="error" v-if="idExists">That ID already exists. Choose a different ID.</div>
       <label>Species
         <select v-model="selectedSpecies" required>
           <option value="">Select…</option>
@@ -42,7 +40,7 @@
       <label>Notes<textarea v-model="form.notes" /></label>
 
       <div class="actions">
-        <button type="submit" :disabled="loading || idExists">Register</button>
+        <button type="submit" :disabled="loading">Register</button>
       </div>
     </form>
 
@@ -54,7 +52,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
-import { postJson, getJson } from '@/utils/api'
+import { postJson } from '@/utils/api'
 
 type Req = {
   id: string
@@ -72,8 +70,6 @@ const form = reactive<Req>({ id: '', species: '', sex: 'male', birthDate: today,
 const loading = ref(false)
 const result = ref<Res | null>(null)
 const error = ref<string | null>(null)
-const checkingId = ref(false)
-const idExists = ref(false)
 const dateError = ref<string | null>(null)
 
 // species selection: common list + custom
@@ -154,22 +150,6 @@ function validateDate() {
   return true
 }
 
-async function onCheckId() {
-  idExists.value = false
-  const id = (form.id || '').trim()
-  if (!id) return
-  checkingId.value = true
-  try {
-    // If GET returns without error, the ID exists
-    await getJson<any>(`/api/AnimalIdentity/${encodeURIComponent(id)}`)
-    idExists.value = true
-  } catch {
-    idExists.value = false
-  } finally {
-    checkingId.value = false
-  }
-}
-
 async function submit() {
   loading.value = true
   result.value = null
@@ -194,10 +174,6 @@ async function submit() {
     if (!form.species) {
       throw new Error('Please select a species or enter a custom species.')
     }
-    if (idExists.value) {
-      throw new Error('This ID already exists. Please choose a different ID.')
-    }
-
     // Build payload and always include breed and notes as strings (empty when not provided)
     const payload: Req = {
       id: form.id,

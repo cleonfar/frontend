@@ -706,8 +706,20 @@ watch(() => activeTab.value, (t) => {
     // Always refresh the mothers list whenever the Mothers tab is opened
     loadMothers()
   }
-  if (t === 'reports' && !reproReportNames.value.length && !reproNamesLoading.value) {
+  if (t === 'reports') {
+    // Always refresh the reproduction reports list whenever the Reports tab is opened
     loadReproReportNames()
+    // Re-read contents for any currently expanded reports
+    const names = Object.keys(expandedRepro.value).filter(n => expandedRepro.value[n])
+    for (const name of names) {
+      if (!reproLoadingByName.value[name]) {
+        loadReproReportByName(name)
+      }
+    }
+    // If a specific report is selected in the lookup section, re-load it as well
+    if (lookup.value.reportName && String(lookup.value.reportName).trim()) {
+      onLoadReport()
+    }
   }
 })
 
@@ -1097,7 +1109,10 @@ function toJson(v: any) {
 
 // Performance report parsing
 type PerfRow = { animal: string; litters: number; offspring: number; avgOffspringPerLitter: number | null; avgSurvivingPerLitter: number | null; survivalRatePct: number | null }
-const perfRe = /Performance for\s+(.+?)\s*\(.*?\):\s*Litters:\s*(\d+),\s*Offspring:\s*(\d+),\s*Weaning Survival:\s*([\d.]+)%/i
+// Accept lines like:
+// "Performance for 1 (Fri Mar 04 2022 to Tue Nov 04 2025): Litters: 3, Offspring: 8, Avg Offspring/Litter: 2.67, Avg Surviving/Litter: 2.67, Survival: 100.00%"
+// as well as legacy "Weaning Survival" wording, with optional extra fields between Offspring and Survival.
+const perfRe = /Performance for\s+(.+?)\s*\(.*?\):\s*Litters:\s*(\d+),\s*Offspring:\s*(\d+)(?:,\s*[^:]+:\s*[^,]+)*,\s*(?:Weaning\s+)?Survival:\s*([\d.]+)%/i
 function round(n: number, d = 2) { return Math.round(n * 10 ** d) / 10 ** d }
 function toLines(input: any): string[] {
   // Accept array of strings, a single string (possibly JSON or newline-delimited), or arrays nested in common keys
@@ -1132,17 +1147,33 @@ function parsePerformance(input: any): PerfRow[] {
   if (!lines.length) return []
   const rows: PerfRow[] = []
   for (const line of lines) {
-    const m = String(line).match(perfRe)
+    const s = String(line)
+    const m = s.match(perfRe)
     if (!m) continue
     const [, animal, littersStr, offspringStr, survivalStr] = m
     const litters = Number(littersStr)
     const offspring = Number(offspringStr)
     const survivalRatePct = Number(survivalStr)
-    const avg = litters > 0 ? round(offspring / litters, 2) : null
+    // Try to parse provided averages if present; else compute
+    let avgOff: number | null = null
+    let avgSurv: number | null = null
+    const mAvgOff = s.match(/Avg\s+Offspring\/Litter:\s*([\d.]+)/i)
+    const mAvgSurv = s.match(/Avg\s+Surviving\/Litter:\s*([\d.]+)/i)
+    if (mAvgOff && mAvgOff[1] != null && mAvgOff[1] !== '') {
+      const n = Number(mAvgOff[1])
+      if (isFinite(n)) avgOff = round(n, 2)
+    }
+    if (mAvgSurv && mAvgSurv[1] != null && mAvgSurv[1] !== '') {
+      const n = Number(mAvgSurv[1])
+      if (isFinite(n)) avgSurv = round(n, 2)
+    }
     const survPct = isFinite(survivalRatePct) ? round(survivalRatePct, 2) : null
-    const survivors = survPct != null ? (offspring * (survPct / 100)) : null
-    const avgSurv = (survivors != null && litters > 0) ? round(survivors / litters, 2) : null
-    rows.push({ animal: String(animal).trim(), litters, offspring, avgOffspringPerLitter: avg, avgSurvivingPerLitter: avgSurv, survivalRatePct: survPct })
+    if (avgOff == null) avgOff = litters > 0 ? round(offspring / litters, 2) : null
+    if (avgSurv == null) {
+      const survivors = survPct != null ? (offspring * (survPct / 100)) : null
+      avgSurv = (survivors != null && litters > 0) ? round(survivors / litters, 2) : null
+    }
+    rows.push({ animal: String(animal).trim(), litters, offspring, avgOffspringPerLitter: avgOff, avgSurvivingPerLitter: avgSurv, survivalRatePct: survPct })
   }
   return rows
 }

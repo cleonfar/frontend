@@ -1237,6 +1237,17 @@ watch(() => activeTab.value, (t) => {
   if (t === 'reports') {
     // Always refresh the reports list whenever the Reports tab is opened
     loadWeightReportNames()
+    // Re-read contents for any currently expanded reports
+    const names = Object.keys(expandedReport.value).filter(n => expandedReport.value[n])
+    for (const name of names) {
+      if (!loadingReportByName.value[name]) {
+        loadReportByName(name)
+      }
+    }
+    // If a specific report is selected in the lookup section, re-load it as well
+    if (lookup.value.reportName && String(lookup.value.reportName).trim()) {
+      onLoadReport()
+    }
   }
   if (t === 'browse') {
     // Always refresh the animals list when opening the tab
