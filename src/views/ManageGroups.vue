@@ -63,7 +63,7 @@
         </thead>
         <tbody>
           <template v-for="h in herds" :key="h.name">
-            <tr>
+            <tr :class="selectGroups ? 'clickable-row' : ''" @click="onRowToggleGroup(h.name, $event)">
               <td v-if="selectGroups"><input type="checkbox" :checked="isGroupSelected(h.name)" @change="toggleGroupSelected(h.name)" /></td>
               <td><strong>{{ h.name }}</strong></td>
               <td>{{ h.description ?? '-' }}</td>
@@ -112,6 +112,49 @@
                     <label>Remove animal from {{ h.name }}</label>
                     <input v-model="removeAnimalInputs[h.name]" placeholder="animal id" />
                     <button :disabled="busy[h.name]" @click="onRemoveAnimal(h.name)">Remove</button>
+                  </div>
+                  <!-- Quick registration prompt when the animal isn't registered -->
+                  <div v-if="regNeeded[h.name]" class="card sub mt">
+                    <h4>This animal isn’t registered</h4>
+                    <p class="muted">Please provide the required registration details to continue.</p>
+                    <div class="grid-2">
+                      <label>Animal ID
+                        <input :value="regForm[h.name]?.id" readonly />
+                      </label>
+                      <label>Sex
+                        <select v-model="regForm[h.name].sex">
+                          <option value="male">male</option>
+                          <option value="female">female</option>
+                          <option value="neutered">neutered</option>
+                        </select>
+                      </label>
+                      <div>
+                        <label>Species
+                          <select v-model="selectedSpecies[h.name]">
+                            <option value="">Select…</option>
+                            <option v-for="sp in KNOWN_SPECIES" :key="sp" :value="sp">{{ sp }}</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <div v-if="selectedSpecies[h.name] === 'other'">
+                          <input v-model="customSpecies[h.name]" placeholder="Enter species" aria-label="Species" />
+                        </div>
+                      </div>
+                      <label>Birth date
+                        <input type="date" v-model="regForm[h.name].birthDate" />
+                      </label>
+                      <label>Breed (optional)
+                        <input v-model="regForm[h.name].breed" placeholder="optional" />
+                      </label>
+                      <label>Notes
+                        <input v-model="regForm[h.name].notes" placeholder="optional" />
+                      </label>
+                    </div>
+                    <div class="row mt">
+                      <button @click="onQuickRegisterAndAdd(h.name)" :disabled="regLoading[h.name]">{{ regLoading[h.name] ? 'Registering…' : 'Register and add' }}</button>
+                      <button class="ml" @click="regNeeded[h.name] = false" :disabled="regLoading[h.name]">Cancel</button>
+                      <div v-if="regError[h.name]" class="error ml">{{ regError[h.name] }}</div>
+                    </div>
                   </div>
                 </div>
               </td>
@@ -219,6 +262,15 @@ const addAnimalInputs = ref<Record<string, string>>({})
 const removeAnimalInputs = ref<Record<string, string>>({})
 const rowConfirmDeleteHerd = ref<Record<string, boolean>>({})
 const rowConfirmRestoreHerd = ref<Record<string, boolean>>({})
+// Quick registration per-herd state for adding unregistered animals
+type RegReq = { id: string; species: string; sex: 'male'|'female'|'neutered'; birthDate: string; breed?: string; notes?: string }
+const KNOWN_SPECIES = ['cow','sheep','goat','pig','horse','donkey','camel','buffalo','rabbit'] as const
+const regNeeded = ref<Record<string, boolean>>({})
+const regForm = ref<Record<string, RegReq>>({})
+const selectedSpecies = ref<Record<string, string>>({})
+const customSpecies = ref<Record<string, string>>({})
+const regLoading = ref<Record<string, boolean>>({})
+const regError = ref<Record<string, string | null>>({})
 // Collapsible state for Create new group box
 const createBoxOpen = ref(true)
 const CREATE_BOX_KEY = 'groups.createBoxOpen'
@@ -252,6 +304,25 @@ function toggleSelectGroups() {
 }
 function isGroupSelected(name: string) { return !!selectedGroups.value[name] }
 function toggleGroupSelected(name: string) { selectedGroups.value[name] = !selectedGroups.value[name] }
+
+function isInteractiveElement(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const tag = el.tagName
+  if (['BUTTON','A','INPUT','SELECT','TEXTAREA','LABEL'].includes(tag)) return true
+  // If the click happened inside the actions cell, don't toggle row selection
+  if (el.closest && el.closest('.actions-cell')) return true
+  // Content editable or role-based interactive
+  const role = el.getAttribute && el.getAttribute('role')
+  if (role && /button|link|checkbox|switch|menu|option/i.test(role)) return true
+  return false
+}
+
+function onRowToggleGroup(name: string, e: MouseEvent) {
+  if (!selectGroups.value) return
+  const target = e.target as HTMLElement | null
+  if (isInteractiveElement(target)) return
+  toggleGroupSelected(name)
+}
 
 const batchMerge = ref<{ targetName: string; description?: string }>({ targetName: '' })
 const mergingSelected = ref(false)
@@ -365,6 +436,67 @@ function normalizeHerd(h: any): Herd {
   return { name: String(name), description: h?.description ?? h?.Description, members }
 }
 
+// Helpers to locate a registered animal via the overview list endpoint
+function extractId(a: any): string | undefined {
+  if (a == null) return undefined
+  if (typeof a === 'string' || typeof a === 'number') return String(a)
+  const direct = (
+    a.AnimalID ?? a.AnimalId ?? a.animalID ?? a.animalId ?? a.animal_id ??
+    a.id ?? a.ID ?? a.Id ??
+    a.identityId ?? a.identityID ?? a.IdentityId ?? a.IdentityID ??
+    a.uid ?? a.UUID ?? a.uuid ?? a.uniqueId ?? a.uniqueID ??
+    a.animal ?? a.name ?? a.code ?? a.animalCode ?? a.identifier ?? a.tag ?? a.earTag ?? a.ear_tag ?? a.identity ??
+    a._id
+  )
+  if (direct != null) return String(direct)
+  const nestedCandidates = [a.identity, a.meta, a.info, a.Animal, a.AnimalIdentity]
+  for (const obj of nestedCandidates) {
+    if (obj && typeof obj === 'object') {
+      const nestedId = (obj.id ?? obj.ID ?? obj.Id ?? obj._id)
+      if (nestedId != null) return String(nestedId)
+    }
+  }
+  for (const [k, v] of Object.entries(a)) {
+    if (typeof v === 'string' || typeof v === 'number') {
+      if (/^(id|_id|animalid|identityid|uid|uuid)$/i.test(k)) return String(v)
+      if (/(^|[^a-z])(id|uid|uuid)([^a-z]|$)/i.test(k) && String(v).length > 0) return String(v)
+    }
+    if (v && typeof v === 'object') {
+      const vv: any = v
+      const nested = vv.id ?? vv.ID ?? vv.Id ?? vv._id
+      if (nested != null) return String(nested)
+    }
+  }
+  return undefined
+}
+
+async function findRegisteredAnimal(id: string): Promise<any | null> {
+  const target = (id || '').trim()
+  if (!target) return null
+  try {
+    const res = await postJson<any, any>('/api/AnimalIdentity/_getAllAnimals', {})
+    let list: any[] = []
+    if (Array.isArray(res)) list = res
+    else if (res && typeof res === 'object') {
+      if (Array.isArray(res.animals)) list = res.animals
+      else if (Array.isArray(res.data)) list = res.data
+      else if (Array.isArray(res.items)) list = res.items
+      else if (res.body && typeof res.body === 'object') {
+        if (Array.isArray(res.body.animals)) list = res.body.animals
+        else if (Array.isArray(res.body.data)) list = res.body.data
+        else if (Array.isArray(res.body.items)) list = res.body.items
+      }
+    }
+    for (const a of list) {
+      const aid = extractId(a)
+      if (aid && String(aid) === target) return a
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 async function loadHerds() {
   loading.value = true
   error.value = null
@@ -429,6 +561,39 @@ function toggleMembers(name: string) {
   }
 }
 
+function resolveSpeciesFor(name: string): string {
+  const sel = (selectedSpecies.value[name] || '').trim()
+  const custom = (customSpecies.value[name] || '').trim()
+  return sel === 'other' ? custom : sel
+}
+
+async function onQuickRegisterAndAdd(name: string) {
+  regError.value[name] = null
+  regLoading.value[name] = true
+  try {
+    const form = regForm.value[name]
+    if (!form || !form.id) throw new Error('Missing animal ID')
+    const species = resolveSpeciesFor(name)
+    if (!species) throw new Error('Please select a species or enter a custom species')
+    const payload: RegReq = {
+      id: String(form.id).trim(),
+      species,
+      sex: form.sex,
+      birthDate: (form.birthDate || '').trim(),
+      breed: (form.breed || '').trim(),
+      notes: (form.notes || '').trim()
+    }
+    await postJson<RegReq, any>('/api/AnimalIdentity/registerAnimal', payload)
+    regNeeded.value[name] = false
+    // After successful registration, attempt the add again
+    await onAddAnimal(name)
+  } catch (e: any) {
+    regError.value[name] = e?.message ?? String(e)
+  } finally {
+    regLoading.value[name] = false
+  }
+}
+
 async function loadHerdMembers(name: string, herd?: Herd) {
   membersLoading.value[name] = true
   membersError.value[name] = undefined
@@ -475,7 +640,7 @@ async function onCreateHerd() {
   creating.value = true
   error.value = null
   try {
-    const payload = { name: newHerd.value.name, description: newHerd.value.description }
+    const payload = { name: newHerd.value.name, description: newHerd.value.description || '' }
     await postJson<typeof payload, any>('/api/HerdGrouping/createHerd', payload)
     newHerd.value = { name: '' }
     await loadHerds()
@@ -528,8 +693,21 @@ function refreshHerdMembersIfCached(name: string) {
 async function onAddAnimal(name: string) {
   const animal = (addAnimalInputs.value[name] || '').trim()
   if (!animal) return
-  busy.value[name] = true
+  // Check registration first; if missing, prompt for quick registration
   error.value = null
+  try {
+    const record = await findRegisteredAnimal(animal)
+    if (!record) {
+      const todayStr = new Date().toISOString().slice(0,10)
+      regForm.value[name] = { id: animal, species: '', sex: 'male', birthDate: todayStr, breed: '', notes: '' }
+      selectedSpecies.value[name] = ''
+      customSpecies.value[name] = ''
+      regError.value[name] = null
+      regNeeded.value[name] = true
+      return
+    }
+  } catch {}
+  busy.value[name] = true
   try {
     const payload = { herdName: name, animal }
     await postJson<typeof payload, any>('/api/HerdGrouping/addAnimal', payload)
@@ -707,4 +885,6 @@ button { padding: 0.35rem 0.7rem }
  }
 .ml { margin-left: 0.5rem }
 .root-card { max-width: 900px; margin: 0 auto; }
+.clickable-row { cursor: pointer }
+.clickable-row:hover { background: var(--surface-2, #fafafa) }
 </style>

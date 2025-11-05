@@ -343,7 +343,7 @@
         </thead>
         <tbody>
           <template v-for="id in animalsWithRecords" :key="id">
-            <tr>
+            <tr :class="selectMode ? 'clickable-row' : ''" @click="onRowToggleAnimal(id, $event)">
               <td v-if="selectMode"><input type="checkbox" :checked="isSelected(id)" @change="toggleSelected(id)" /></td>
               <td><router-link :to="`/animals/${encodeURIComponent(id)}`">{{ id }}</router-link></td>
               <td class="actions-cell">
@@ -701,6 +701,21 @@ function toggleSelectMode() {
 }
 function isSelected(id: string) { return !!selected.value[id] }
 function toggleSelected(id: string) { selected.value[id] = !selected.value[id] }
+function isInteractiveElement(el: HTMLElement | null): boolean {
+  if (!el) return false
+  const tag = el.tagName
+  if (['BUTTON','A','INPUT','SELECT','TEXTAREA','LABEL'].includes(tag)) return true
+  if (el.closest && el.closest('.actions-cell')) return true
+  const role = el.getAttribute && el.getAttribute('role')
+  if (role && /button|link|checkbox|switch|menu|option/i.test(role)) return true
+  return false
+}
+function onRowToggleAnimal(id: string, e: MouseEvent) {
+  if (!selectMode.value) return
+  const target = e.target as HTMLElement | null
+  if (isInteractiveElement(target)) return
+  toggleSelected(id)
+}
 const selectedIds = computed(() => Object.keys(selected.value).filter(k => selected.value[k]))
 const selectedCount = computed(() => selectedIds.value.length)
 const batch = ref<{ start: string; end: string; name: string }>({
@@ -1540,4 +1555,6 @@ function confirmRemoveWeightRecord(animal: string, date: string) {
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem }
+.clickable-row { cursor: pointer }
+.clickable-row:hover { background: var(--surface-2, #fafafa) }
 </style>

@@ -119,6 +119,9 @@
               <td><strong>{{ mid }}</strong></td>
               <td>
                 <button @click.stop="goMother(mid)">Manage offspring</button>
+                <button class="ml small" @click.stop.prevent="bulkWeanMotherOverview(mid)" :disabled="weanBusy[mid]">
+                  {{ weanBusy[mid] ? 'Weaning…' : 'Wean all offspring' }}
+                </button>
                 <template v-if="rowConfirmDeleteMother[mid]">
                   <button class="ml danger" @click.stop.prevent="confirmRemoveMother(mid)" :disabled="removingMother[mid]">
                     {{ removingMother[mid] ? 'Removing…' : 'Confirm' }}
@@ -130,6 +133,16 @@
                     Remove
                   </button>
                 </template>
+              </td>
+            </tr>
+            <tr v-if="weanErr[mid] || (weanResults[mid] && weanResults[mid].length)">
+              <td colspan="2">
+                <div class="muted small" v-if="weanResults[mid] && weanResults[mid].length">
+                  <ul>
+                    <li v-for="r in weanResults[mid]" :key="r">{{ r }}</li>
+                  </ul>
+                </div>
+                <div v-if="weanErr[mid]" class="error small">{{ weanErr[mid] }}</div>
               </td>
             </tr>
             <tr v-if="expanded[mid]">
@@ -750,6 +763,45 @@ async function onRemoveMother(motherId: string) {
 function confirmRemoveMother(id: string) {
   onRemoveMother(id)
 }
+
+  // Bulk wean from overview
+  const weanBusy = ref<Record<string, boolean>>({})
+  const weanErr = ref<Record<string, string | undefined>>({})
+  const weanResults = ref<Record<string, string[]>>({})
+
+  async function bulkWeanMotherOverview(motherId: string) {
+    const id = String(motherId || '').trim()
+    if (!id) return
+    weanBusy.value[id] = true
+    weanErr.value[id] = undefined
+    weanResults.value[id] = []
+    try {
+      // Ensure litters are loaded
+      if (!littersByMother.value[id]) await loadLitters(id)
+      const litters = littersByMother.value[id] || []
+      const today = new Date().toISOString().slice(0,10)
+      for (const lit of litters) {
+        const lid = String(lit.litterId)
+        if (!offspringByLitter.value[lid]) await loadOffspringByLitter(lid)
+        const kids = (offspringByLitter.value[lid] || []).filter(o => !o.weanDate && o.survivedTillWeaning !== true && !o.deathDate)
+        for (const o of kids) {
+          try {
+            const p: any = { offspringId: o.offspringId, date: today, weanDate: today, notes: `Weaned via overview bulk (${id})` }
+            await postJson<typeof p, any>('/api/ReproductionTracking/recordWeaning', p)
+            weanResults.value[id].push(`OK: ${o.offspringId}`)
+          } catch (e: any) {
+            weanResults.value[id].push(`FAIL ${o.offspringId}: ${e?.message ?? String(e)}`)
+          }
+        }
+        // Refresh litter view
+        await loadOffspringByLitter(lid)
+      }
+    } catch (e: any) {
+      weanErr.value[id] = e?.message ?? String(e)
+    } finally {
+      weanBusy.value[id] = false
+    }
+  }
 
 async function loadLitters(motherId: string, attempt = 0) {
   littersLoading.value[motherId] = true

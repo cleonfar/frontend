@@ -245,7 +245,7 @@ async function onConfirm() {
   try {
     const animals = right.value.slice()
   // Backend contract expects { sourceHerdName, targetHerdName, animalsToMove }
-  const payload: any = { sourceHerdName: s, targetHerdName: t, animalsToMove: animals }
+  const payload: any = { sourceHerdName: s, targetHerdName: t, animalsToMove: animals, description: '' }
     await postJson<typeof payload, any>('/api/HerdGrouping/splitHerd', payload)
     ok.value = true
     // Notify parent (ManageGroups) so it can refresh lists/members
