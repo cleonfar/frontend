@@ -330,9 +330,9 @@ const addMotherForm = ref<{ motherId: string }>({ motherId: '' })
 const addingMother = ref(false)
 const addMotherError = ref<string | null>(null)
 const addMotherOk = ref(false)
-// Status confirmation for sold/deceased mothers
+// Status confirmation for unusual conditions (sold/deceased/male)
 const motherStatusConfirmNeeded = ref(false)
-const motherStatusType = ref<'sold' | 'deceased' | 'unknown' | null>(null)
+const motherStatusType = ref<'sold' | 'deceased' | 'male' | 'unknown' | null>(null)
 const motherStatusMessage = ref('')
 const motherPendingId = ref<string | null>(null)
 
@@ -349,6 +349,18 @@ function getStatusFromIdentity(obj: any): 'sold' | 'deceased' | 'active' | 'unkn
   if (sold === true || String(sold).toLowerCase() === 'true') return 'sold'
   const dead = (obj as any).deceased ?? (obj as any).isDeceased ?? (obj as any).dead ?? (obj as any).isDead ?? (obj as any).Deceased ?? (obj as any).IsDeceased
   if (dead === true || String(dead).toLowerCase() === 'true') return 'deceased'
+  return 'unknown'
+}
+
+function getSexFromIdentity(obj: any): 'male' | 'female' | 'neutered' | 'unknown' {
+  if (!obj || typeof obj !== 'object') return 'unknown'
+  const s = (obj as any).sex ?? (obj as any).Sex ?? (obj as any).gender ?? (obj as any).Gender
+  if (s == null) return 'unknown'
+  const v = String(s).trim().toLowerCase()
+  if (!v) return 'unknown'
+  if (v.startsWith('m')) return 'male'
+  if (v.startsWith('f')) return 'female'
+  if (v.includes('neuter') || v.includes('castrat') || v.includes('steer') || v.includes('wether')) return 'neutered'
   return 'unknown'
 }
 
@@ -425,7 +437,15 @@ async function onAddMother() {
     motherRegNeeded.value = true
     return
   }
-  // If registered, check identity status from the list record and require confirmation if sold/deceased
+  // If registered, check sex and status from the list record and require confirmation when needed
+  const sx = getSexFromIdentity(record)
+  if (sx === 'male' && !motherStatusConfirmNeeded.value) {
+    motherPendingId.value = id
+    motherStatusType.value = 'male'
+    motherStatusMessage.value = 'This animal is registered as male. Do you want to proceed with adding as a mother?'
+    motherStatusConfirmNeeded.value = true
+    return
+  }
   const st = getStatusFromIdentity(record)
   if ((st === 'sold' || st === 'deceased') && !motherStatusConfirmNeeded.value) {
     motherPendingId.value = id
