@@ -707,19 +707,10 @@ watch(() => activeTab.value, (t) => {
     loadMothers()
   }
   if (t === 'reports') {
+    // Clear any cached UI/memory for a fresh view
+    resetReproReportsViewState()
     // Always refresh the reproduction reports list whenever the Reports tab is opened
     loadReproReportNames()
-    // Re-read contents for any currently expanded reports
-    const names = Object.keys(expandedRepro.value).filter(n => expandedRepro.value[n])
-    for (const name of names) {
-      if (!reproLoadingByName.value[name]) {
-        loadReproReportByName(name)
-      }
-    }
-    // If a specific report is selected in the lookup section, re-load it as well
-    if (lookup.value.reportName && String(lookup.value.reportName).trim()) {
-      onLoadReport()
-    }
   }
 })
 
@@ -938,6 +929,31 @@ const reproReportTextByName = ref<Record<string, string | null>>({})
 const reproSummaryTextByName = ref<Record<string, string | null>>({})
 const reproSummaryLoadingByName = ref<Record<string, boolean>>({})
 const reproSummaryErrorByName = ref<Record<string, string | null>>({})
+
+function resetReproReportsViewState() {
+  // Clear lists and per-row caches for a fresh reports view
+  reproReportNames.value = []
+  reproNamesError.value = null
+  reproRowDeleting.value = {}
+  reproRowConfirmDelete.value = {}
+  reproDeleteListError.value = null
+  reproRowMenuOpen.value = {}
+  expandedRepro.value = {}
+  reproLoadingByName.value = {}
+  reproErrorByName.value = {}
+  reproReportObjByName.value = {}
+  reproReportTextByName.value = {}
+  reproSummaryTextByName.value = {}
+  reproSummaryLoadingByName.value = {}
+  reproSummaryErrorByName.value = {}
+  // Clear lookup panel state as well
+  lookup.value.reportName = ''
+  reportObj.value = null
+  reportText.value = null
+  summaryText.value = null
+  summaryLoading.value = false
+  summaryError.value = null
+}
 
 async function loadReproReportNames(attempt = 0) {
   reproNamesLoading.value = true

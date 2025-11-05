@@ -932,6 +932,31 @@ const rowConfirmDelete = ref<Record<string, boolean>>({})
 // If navigated with ?name=XYZ, auto-open this report after list load
 const pendingOpenReportName = ref<string | null>(null)
 
+function resetWeightsReportsViewState() {
+  // Clear list and per-row caches
+  weightReportNames.value = []
+  reportNamesError.value = null
+  rowDeleting.value = {}
+  deleteListError.value = null
+  rowMenuOpen.value = {}
+  expandedReport.value = {}
+  loadingReportByName.value = {}
+  errorReportByName.value = {}
+  reportObjByName.value = {}
+  reportTextByName.value = {}
+  summaryTextByName.value = {}
+  summaryLoadingByName.value = {}
+  summaryErrorByName.value = {}
+  rowConfirmDelete.value = {}
+  // Clear lookup panel state as well
+  lookup.value.reportName = ''
+  reportObj.value = null
+  reportText.value = null
+  summaryText.value = null
+  summaryLoading.value = false
+  summaryError.value = null
+}
+
 async function loadWeightReportNames(attempt = 0) {
   if (attempt === 0) {
     reportNamesLoading.value = true
@@ -1235,19 +1260,10 @@ function confirmDelete(name: string) {
 // Auto-load names when Reports opens, and refresh Browse list when opened
 watch(() => activeTab.value, (t) => {
   if (t === 'reports') {
+    // Clear any cached UI/memory for a fresh view
+    resetWeightsReportsViewState()
     // Always refresh the reports list whenever the Reports tab is opened
     loadWeightReportNames()
-    // Re-read contents for any currently expanded reports
-    const names = Object.keys(expandedReport.value).filter(n => expandedReport.value[n])
-    for (const name of names) {
-      if (!loadingReportByName.value[name]) {
-        loadReportByName(name)
-      }
-    }
-    // If a specific report is selected in the lookup section, re-load it as well
-    if (lookup.value.reportName && String(lookup.value.reportName).trim()) {
-      onLoadReport()
-    }
   }
   if (t === 'browse') {
     // Always refresh the animals list when opening the tab
